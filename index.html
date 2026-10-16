@@ -17,14 +17,17 @@
   <main>
     <header>
       <h1>MP4/MOV Spatial Metadata Studio</h1>
-      <p>Non-destructive 360&deg; view, edit list, rotation, chapters, captions (tx3g), transcript and tags. No re-encoding.</p>
+      <p>Non-destructive 360&deg; view, speed control, edit list, rotation, chapters, captions (tx3g), transcript and live metadata inspector. No re-encoding.</p>
     </header>
 
     <section>
       <div class="row">
         <div class="grow">
-          <label for="fileInput">1. Load .mp4 or .mov</label>
-          <input type="file" id="fileInput" accept=".mp4,.mov,video/mp4,video/quicktime">
+          <label for="fileInput">1. Load .mp4 or .mov (or try the pre-configured sample)</label>
+          <div class="file-bar">
+            <input type="file" id="fileInput" accept=".mp4,.mov,video/mp4,video/quicktime">
+            <button id="loadSampleBtn" type="button" class="primary" title="Load sample/mountain-top-night-sky.mp4 with pre-configured 360° pose, speed ramp, chapters, captions & tags">Load Sample Video</button>
+          </div>
         </div>
         <div>
           <label>2. View mode</label>
@@ -78,7 +81,8 @@
 
         <div id="emptyVideoOverlay">
           <p><strong>No video loaded</strong></p>
-          <p>Select an .mp4 or .mov above. You can already drag the grid to test the initial camera angle.</p>
+          <p>Select an .mp4 or .mov above, or load the built-in mountain night sky sample with pre-configured 360&deg; pose, speed ramps, chapters, and captions.</p>
+          <button id="overlaySampleBtn" type="button">Load Sample (mountain-top-night-sky.mp4)</button>
         </div>
       </div>
 
@@ -86,7 +90,20 @@
         <button id="playPauseBtn" type="button">Play</button>
         <input type="range" id="seekBar" min="0" max="100" step="0.05" value="0">
         <button id="muteBtn" type="button">Audio</button>
-        <span id="liveSpeedBadge">1x</span>
+        <label class="inline" for="transportSpeedSelect" title="Global Video Speed (saved to MP4 Edit List)">
+          Speed:
+          <select id="transportSpeedSelect">
+            <option value="0.25">0.25x (Slow)</option>
+            <option value="0.5">0.5x (Slow)</option>
+            <option value="0.75">0.75x</option>
+            <option value="1" selected>1x (Normal)</option>
+            <option value="1.25">1.25x</option>
+            <option value="1.5">1.5x (Fast)</option>
+            <option value="2">2x (Fast)</option>
+            <option value="4">4x (Timelapse)</option>
+          </select>
+        </label>
+        <span id="liveSpeedBadge" title="Active playback rate">1x</span>
       </div>
 
       <div>
@@ -108,18 +125,49 @@
 
     <section>
       <div class="tabs">
-        <button type="button" class="tab-btn active" data-tab="tab-edits">1. Cuts &amp; Sync</button>
+        <button type="button" class="tab-btn active" data-tab="tab-edits">1. Cuts &amp; Speed</button>
         <button type="button" class="tab-btn" data-tab="tab-spatial">2. 360&deg; Spatial</button>
         <button type="button" class="tab-btn" data-tab="tab-geometry">3. Rotate &amp; Mirror</button>
         <button type="button" class="tab-btn" data-tab="tab-chapters">4. Chapters</button>
         <button type="button" class="tab-btn" data-tab="tab-catalog">5. Tags &amp; Cover</button>
-        <button type="button" class="tab-btn" data-tab="tab-captions">6. Captions &amp; Transcript</button>
+        <button type="button" class="tab-btn" data-tab="tab-captions">6. Captions</button>
+        <button type="button" class="tab-btn" data-tab="tab-inspector">7. Metadata Inspector</button>
       </div>
 
-      <!-- TAB 1 -->
+      <!-- TAB 1: CUTS, GLOBAL SPEED & SEGMENT SPEED -->
       <div id="tab-edits" class="tab-panel">
         <div class="box">
-          <h3>Cuts, speed changes, freeze frames (edts / elst)</h3>
+          <div class="between">
+            <h3>Global video playback speed (entire video default)</h3>
+            <button id="resetSpeedBtn" type="button" class="sm">Reset to 1x</button>
+          </div>
+          <div class="grid2">
+            <div>
+              <label for="globalSpeed">Default playback speed (edts / elst rate)</label>
+              <select id="globalSpeed">
+                <option value="0.25">0.25x - Quarter Speed Slow Motion</option>
+                <option value="0.5">0.5x - Half Speed Slow Motion</option>
+                <option value="0.75">0.75x - Slight Slow Down</option>
+                <option value="1" selected>1x - Normal Speed</option>
+                <option value="1.25">1.25x - Slight Speed Up</option>
+                <option value="1.5">1.5x - Fast Playback</option>
+                <option value="2">2x - Double Speed</option>
+                <option value="4">4x - Quadruple Timelapse</option>
+              </select>
+            </div>
+            <div>
+              <p class="dim" style="margin-top:20px;">
+                Slows down or speeds up the entire video non-destructively via the MP4 Edit List (<code>elst</code>) without re-encoding. Segment rules below override this rate for specific time ranges.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div class="box">
+          <div class="between">
+            <h3>Segment cuts, speed changes &amp; freeze frames (edts / elst)</h3>
+            <button id="clearRulesBtn" type="button" class="sm">Clear All Rules</button>
+          </div>
           <div class="grid4">
             <div>
               <label for="ruleStart">Start (sec)</label>
@@ -130,36 +178,46 @@
               <input type="number" id="ruleEnd" step="0.1" min="0" value="2">
             </div>
             <div>
-              <label for="ruleAction">Action</label>
+              <label for="ruleAction">Action / Segment Speed</label>
               <select id="ruleAction">
                 <option value="cut">Cut / Skip</option>
+                <option value="0.25">Slow 0.25x</option>
+                <option value="0.5">Slow 0.5x</option>
+                <option value="0.75">Slow 0.75x</option>
+                <option value="1.25">Fast 1.25x</option>
+                <option value="1.5">Fast 1.5x</option>
                 <option value="2">Fast 2x</option>
                 <option value="4">Fast 4x</option>
-                <option value="0.5">Slow 0.5x</option>
-                <option value="0">Freeze Frame</option>
+                <option value="0">Freeze Frame (0x)</option>
               </select>
             </div>
             <div class="end">
-              <button id="addRuleBtn" type="button" class="primary">+ Add Rule</button>
+              <button id="addRuleBtn" type="button" class="primary">+ Add / Save Rule</button>
             </div>
           </div>
           <ul id="ruleList" class="list"></ul>
         </div>
 
         <div class="box">
-          <h3>Audio sync offset</h3>
+          <div class="between">
+            <h3>Audio sync offset</h3>
+            <button id="clearAudioSyncBtn" type="button" class="sm">Reset Sync (0ms)</button>
+          </div>
           <label for="audioSyncMs">Delay / advance (milliseconds)</label>
           <input type="number" id="audioSyncMs" step="50" value="0" placeholder="e.g. 250 or -250">
           <p class="dim">Positive values add an empty edit before the audio track. Negative values shift audio start forward.</p>
         </div>
       </div>
 
-      <!-- TAB 2 -->
+      <!-- TAB 2: 360 SPATIAL -->
       <div id="tab-spatial" class="tab-panel hidden">
         <div class="box">
           <div class="between">
             <h3>Spherical Video V1 (uuid) and initial camera pose</h3>
-            <button id="captureViewTabBtn" type="button">Copy Current Viewport Angle</button>
+            <div class="inline">
+              <button id="captureViewTabBtn" type="button" class="sm">Copy Current Viewport Angle</button>
+              <button id="clearSpatialBtn" type="button" class="sm">Clear / Disable 360&deg;</button>
+            </div>
           </div>
           <div class="grid2">
             <div>
@@ -195,10 +253,13 @@
         </div>
       </div>
 
-      <!-- TAB 3 -->
+      <!-- TAB 3: GEOMETRY -->
       <div id="tab-geometry" class="tab-panel hidden">
         <div class="box">
-          <h3>Rotation and mirror (tkhd matrix)</h3>
+          <div class="between">
+            <h3>Rotation and mirror (tkhd matrix)</h3>
+            <button id="clearGeometryBtn" type="button" class="sm">Reset Geometry</button>
+          </div>
           <p class="dim">Updates the 3x3 matrix in the video track header. Lossless.</p>
           <div class="grid2">
             <div>
@@ -222,10 +283,13 @@
         </div>
       </div>
 
-      <!-- TAB 4 -->
+      <!-- TAB 4: CHAPTERS -->
       <div id="tab-chapters" class="tab-panel hidden">
         <div class="box">
-          <h3>Chapter markers (udta / chpl)</h3>
+          <div class="between">
+            <h3>Chapter markers (udta / chpl)</h3>
+            <button id="clearChaptersBtn" type="button" class="sm">Clear All Chapters</button>
+          </div>
           <div class="grid3">
             <div>
               <label for="chapTime">Time (sec)</label>
@@ -236,43 +300,50 @@
               <input type="text" id="chapTitle" placeholder="e.g. Lab Walkthrough">
             </div>
             <div class="end">
-              <button id="addChapBtn" type="button" class="primary">+ Add Chapter</button>
+              <button id="addChapBtn" type="button" class="primary">+ Add / Save Chapter</button>
             </div>
           </div>
           <ul id="chapList" class="list"></ul>
         </div>
       </div>
 
-      <!-- TAB 5 -->
+      <!-- TAB 5: CATALOG TAGS & COVER -->
       <div id="tab-catalog" class="tab-panel hidden">
         <div class="box">
-          <h3>Tags, GPS and cover art (udta / meta / ilst)</h3>
+          <div class="between">
+            <h3>Tags, GPS and cover art (udta / meta / ilst)</h3>
+            <button id="clearCatalogBtn" type="button" class="sm">Clear All Tags &amp; Cover</button>
+          </div>
           <div class="grid2">
             <div>
-              <label for="metaTitle">Title</label>
+              <label for="metaTitle">Title (&copy;nam)</label>
               <input type="text" id="metaTitle" placeholder="e.g. 360 Campus Tour">
             </div>
             <div>
-              <label for="metaArtist">Artist / creator</label>
+              <label for="metaArtist">Artist / creator (&copy;art)</label>
               <input type="text" id="metaArtist" placeholder="e.g. Spatial Media Lab">
             </div>
             <div>
-              <label for="metaComment">Comment</label>
+              <label for="metaComment">Comment (&copy;cmt)</label>
               <input type="text" id="metaComment" placeholder="Notes or description">
             </div>
             <div>
-              <label for="metaGps">GPS (lat, lng)</label>
+              <label for="metaGps">GPS (lat, lng in &copy;xyz)</label>
               <input type="text" id="metaGps" placeholder="-37.8136, 144.9631">
             </div>
           </div>
-          <label for="coverInput">Cover art (JPEG or PNG)</label>
+          <label for="coverInput">Cover art (JPEG or PNG in covr)</label>
           <input type="file" id="coverInput" accept="image/jpeg,image/png">
+          <div id="coverPreviewBox" class="cover-preview-box hidden">
+            <img id="coverPreviewImg" alt="Cover preview">
+            <span id="coverPreviewLabel" class="dim">Embedded cover art loaded</span>
+            <button id="removeCoverBtn" type="button" class="sm">Remove Cover Art</button>
+          </div>
         </div>
       </div>
 
       <!-- TAB 6: CAPTIONS & TRANSCRIPT -->
       <div id="tab-captions" class="tab-panel hidden">
-        <!-- 6A. Native Browser Auto-Caption Generator -->
         <div class="box">
           <div class="between">
             <h3>Auto-Generate Captions (Native Browser Web Speech API)</h3>
@@ -311,7 +382,6 @@
           </div>
         </div>
 
-        <!-- 6B. Track Settings & SRT/VTT Import / Download -->
         <div class="box">
           <h3>Subtitle Track Settings (MP4 tx3g) &amp; File Import / Export</h3>
           <div class="grid3">
@@ -339,7 +409,6 @@
           </div>
         </div>
 
-        <!-- 6C. Add / Edit Individual Captions -->
         <div class="box">
           <div class="between">
             <h3>Add or Edit Caption Cues</h3>
@@ -365,13 +434,13 @@
           <ul id="capList" class="list"></ul>
         </div>
 
-        <!-- 6D. Transcript (©lyr) -->
         <div class="box">
           <div class="between">
             <h3>Full Text Transcript (saved in MP4 &copy;lyr atom &amp; Studio state)</h3>
             <div class="inline">
               <button id="buildTranscriptBtn" type="button">Build from Captions</button>
               <button id="downloadTranscriptTxtBtn" type="button">Download Transcript (.TXT)</button>
+              <button id="clearTranscriptBtn" type="button">Clear Transcript</button>
             </div>
           </div>
           <textarea id="transcriptText" placeholder="Full video transcript... Click 'Build from Captions' to populate from your caption cues, or edit freely before exporting."></textarea>
@@ -381,8 +450,39 @@
         </div>
       </div>
 
+      <!-- TAB 7: CURRENT METADATA INSPECTOR & EDITOR -->
+      <div id="tab-inspector" class="tab-panel hidden">
+        <div class="box">
+          <div class="between">
+            <h3>Current Metadata Inspector (View, Edit, Clear &amp; Save)</h3>
+            <div class="inline">
+              <button id="refreshInspectorBtn" type="button" class="sm">Refresh View</button>
+              <button id="clearAllMetadataBtn" type="button" class="sm">Clear All Metadata to Defaults</button>
+              <button id="saveFromInspectorBtn" type="button" class="primary sm">Save &amp; Download Video</button>
+            </div>
+          </div>
+          <p class="dim">
+            Displays all native MP4/MOV metadata detected in the loaded file alongside your current edits. Click <strong>Edit</strong> on any row to modify it, <strong>Clear</strong> to strip that metadata section, or <strong>Save &amp; Download Video</strong> to write changes to the file.
+          </p>
+          <table class="meta-table">
+            <thead>
+              <tr>
+                <th style="width:22%;">Metadata Category</th>
+                <th style="width:16%;">MP4 Atom Path</th>
+                <th>Current Value / Active State</th>
+                <th style="width:160px;">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="metadataTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+
       <div class="export">
-        <button id="exportBtn" type="button" class="primary big">Inject Metadata and Download</button>
+        <div class="inline" style="margin-bottom: 10px;">
+          <button id="exportBtn" type="button" class="primary big" style="flex: 3;">Save / Inject Metadata &amp; Download Video</button>
+          <button id="stripAllExportBtn" type="button" class="big" style="flex: 1;">Clear All Metadata</button>
+        </div>
         <div id="statusBox" class="hidden"></div>
       </div>
     </section>
