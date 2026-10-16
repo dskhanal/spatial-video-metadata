@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Spatial Metadata Studio - 360&deg; MP4/MOV video Non-destructive editor</title>
+  <title>MP4/MOV Spatial Metadata Studio</title>
   <link rel="stylesheet" href="style.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 </head>
@@ -16,8 +16,8 @@
 
   <main>
     <header>
-      <h1>Spatial Metadata Studio - 360&deg; MP4/MOV video Non-destructive editor</h1>
-      <p>View, speed control, continuous repeat, audio hide/removal, edit list, rotation, chapters, captions (tx3g), transcript and live metadata inspector. No re-encoding.</p>
+      <h1>MP4/MOV Spatial Metadata Studio</h1>
+      <p>Non-destructive 360&deg; view, smooth slow-mo frame interpolation, gapless crossfade loop, audio hide/removal, edit list, rotation, chapters, captions (tx3g) and metadata inspector.</p>
     </header>
 
     <section>
@@ -74,7 +74,12 @@
           </div>
         </div>
 
-        <video id="videoPreview" playsinline crossorigin="anonymous" loop class="hidden"></video>
+        <!-- 2D Flat View Canvas (renders both smooth slow-mo frame interpolation and gapless loop crossfades) -->
+        <canvas id="flatCanvas" width="1280" height="720" class="hidden"></canvas>
+
+        <!-- Dual hidden hardware decoders for gapless crossfade looping & sub-frame blending -->
+        <video id="videoPreview" playsinline crossorigin="anonymous"></video>
+        <video id="loopBufferVideo" playsinline crossorigin="anonymous" muted></video>
 
         <!-- Live Caption Preview Overlay (Shown in both 360 and Flat modes) -->
         <div id="captionOverlay" class="hidden"></div>
@@ -88,8 +93,9 @@
 
       <div class="transport">
         <button id="playPauseBtn" type="button">Play</button>
-        <button id="loopToggleBtn" type="button" class="active" title="Play continuously without stopping in the studio">Loop: On</button>
-        <input type="range" id="seekBar" min="0" max="100" step="0.05" value="0">
+        <button id="loopToggleBtn" type="button" class="active" title="Gapless continuous loop without stopping at the end">Loop: Gapless</button>
+        <button id="smoothSlowMoToggleBtn" type="button" class="active" title="Blend intermediate sub-frames in WebGL so slow-motion looks fluid instead of choppy">Smooth Slo-Mo: On</button>
+        <input type="range" id="seekBar" min="0" max="100" step="0.02" value="0">
         <button id="muteBtn" type="button">Audio</button>
         <label class="inline" for="transportSpeedSelect" title="Global Video Speed (saved to MP4 Edit List)">
           Speed:
@@ -104,7 +110,7 @@
             <option value="4">4x (Timelapse)</option>
           </select>
         </label>
-        <span id="liveSpeedBadge" title="Active playback rate">1x</span>
+        <span id="liveSpeedBadge" title="Active playback rate & interpolation mode">1x</span>
       </div>
 
       <div>
@@ -135,11 +141,11 @@
         <button type="button" class="tab-btn" data-tab="tab-inspector">7. Metadata Inspector</button>
       </div>
 
-      <!-- TAB 1: CUTS, GLOBAL SPEED, REPEAT & AUDIO OUTPUT -->
+      <!-- TAB 1: CUTS, SMOOTH SLOW-MO, GAPLESS LOOP & AUDIO OUTPUT -->
       <div id="tab-edits" class="tab-panel">
         <div class="box">
           <div class="between">
-            <h3>Global playback speed &amp; continuous repeat / loop</h3>
+            <h3>Global playback speed, smooth slow-mo interpolation &amp; gapless loop</h3>
             <button id="resetSpeedBtn" type="button" class="sm">Reset Speed &amp; Loop</button>
           </div>
           <div class="grid3">
@@ -157,6 +163,16 @@
               </select>
             </div>
             <div>
+              <label for="loopCrossfadeSec">Gapless loop transition (crossfade window)</label>
+              <select id="loopCrossfadeSec">
+                <option value="0">0.0s (Instant Pre-Buffered Jump - No Pause)</option>
+                <option value="0.4">0.4s (Smooth Loop Dissolve)</option>
+                <option value="0.6" selected>0.6s (Seamless Loop Crossfade)</option>
+                <option value="1.0">1.0s (Long Ambient Loop Blend)</option>
+                <option value="1.5">1.5s (Ultra-Smooth Sky/Water Loop)</option>
+              </select>
+            </div>
+            <div>
               <label for="outputRepeatCount">Output file repeat count (elst loop)</label>
               <select id="outputRepeatCount">
                 <option value="1" selected>1x (Play Once - Standard)</option>
@@ -166,15 +182,30 @@
                 <option value="10">10x (Repeat 10 Times in Output File)</option>
               </select>
             </div>
-            <div class="end">
-              <label class="inline" style="padding: 8px 0;">
+          </div>
+
+          <div class="grid3" style="margin-bottom:4px;">
+            <div>
+              <label class="inline">
                 <input type="checkbox" id="studioLoopCheckbox" checked>
-                Play continuously without stopping in Studio
+                Play continuously without stopping in Studio (Dual-Decoder)
+              </label>
+            </div>
+            <div>
+              <label class="inline">
+                <input type="checkbox" id="smoothSlowMoCheckbox" checked>
+                Smooth Slow-Mo sub-frame blending (&lt;1x speeds)
+              </label>
+            </div>
+            <div>
+              <label class="inline">
+                <input type="checkbox" id="conformSttsCheckbox" checked>
+                Scale native MP4 <code>stts</code> sample deltas for global slow-mo
               </label>
             </div>
           </div>
           <p class="dim">
-            <strong>Studio Loop</strong> repeats playback continuously in this editor without stopping. <strong>Output Repeat Count</strong> duplicates the Edit List (<code>elst</code>) entries so media players play the video multiple times in a row without adding a single byte to the file size.
+            <strong>Smooth Slow-Mo Blending</strong> interpolates intermediate sub-frames at 60fps in WebGL/Canvas so 24/30fps slow-motion clips don't look choppy. <strong>Gapless Dual-Decoder Loop</strong> pre-buffers the start of the video in a second decoder and crossfades the tail into the start so playback never pauses or hiccups at the loop boundary.
           </p>
         </div>
 
@@ -196,9 +227,9 @@
               <label for="ruleAction">Action / Segment Speed</label>
               <select id="ruleAction">
                 <option value="cut">Cut / Skip</option>
-                <option value="0.25">Slow 0.25x</option>
-                <option value="0.5">Slow 0.5x</option>
-                <option value="0.75">Slow 0.75x</option>
+                <option value="0.25">Smooth Slow 0.25x</option>
+                <option value="0.5">Smooth Slow 0.5x</option>
+                <option value="0.75">Smooth Slow 0.75x</option>
                 <option value="1.25">Fast 1.25x</option>
                 <option value="1.5">Fast 1.5x</option>
                 <option value="2">Fast 2x</option>
