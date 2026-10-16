@@ -17,7 +17,7 @@
   <main>
     <header>
       <h1>MP4/MOV Spatial Metadata Studio</h1>
-      <p>Non-destructive 360&deg; view, speed control, edit list, rotation, chapters, captions (tx3g), transcript and live metadata inspector. No re-encoding.</p>
+      <p>Non-destructive 360&deg; view, speed control, continuous repeat, audio hide/removal, edit list, rotation, chapters, captions (tx3g), transcript and live metadata inspector. No re-encoding.</p>
     </header>
 
     <section>
@@ -74,7 +74,7 @@
           </div>
         </div>
 
-        <video id="videoPreview" playsinline crossorigin="anonymous" class="hidden"></video>
+        <video id="videoPreview" playsinline crossorigin="anonymous" loop class="hidden"></video>
 
         <!-- Live Caption Preview Overlay (Shown in both 360 and Flat modes) -->
         <div id="captionOverlay" class="hidden"></div>
@@ -88,6 +88,7 @@
 
       <div class="transport">
         <button id="playPauseBtn" type="button">Play</button>
+        <button id="loopToggleBtn" type="button" class="active" title="Play continuously without stopping in the studio">Loop: On</button>
         <input type="range" id="seekBar" min="0" max="100" step="0.05" value="0">
         <button id="muteBtn" type="button">Audio</button>
         <label class="inline" for="transportSpeedSelect" title="Global Video Speed (saved to MP4 Edit List)">
@@ -125,7 +126,7 @@
 
     <section>
       <div class="tabs">
-        <button type="button" class="tab-btn active" data-tab="tab-edits">1. Cuts &amp; Speed</button>
+        <button type="button" class="tab-btn active" data-tab="tab-edits">1. Cuts, Speed &amp; Audio</button>
         <button type="button" class="tab-btn" data-tab="tab-spatial">2. 360&deg; Spatial</button>
         <button type="button" class="tab-btn" data-tab="tab-geometry">3. Rotate &amp; Mirror</button>
         <button type="button" class="tab-btn" data-tab="tab-chapters">4. Chapters</button>
@@ -134,16 +135,16 @@
         <button type="button" class="tab-btn" data-tab="tab-inspector">7. Metadata Inspector</button>
       </div>
 
-      <!-- TAB 1: CUTS, GLOBAL SPEED & SEGMENT SPEED -->
+      <!-- TAB 1: CUTS, GLOBAL SPEED, REPEAT & AUDIO OUTPUT -->
       <div id="tab-edits" class="tab-panel">
         <div class="box">
           <div class="between">
-            <h3>Global video playback speed (entire video default)</h3>
-            <button id="resetSpeedBtn" type="button" class="sm">Reset to 1x</button>
+            <h3>Global playback speed &amp; continuous repeat / loop</h3>
+            <button id="resetSpeedBtn" type="button" class="sm">Reset Speed &amp; Loop</button>
           </div>
-          <div class="grid2">
+          <div class="grid3">
             <div>
-              <label for="globalSpeed">Default playback speed (edts / elst rate)</label>
+              <label for="globalSpeed">Default playback speed (edts / elst)</label>
               <select id="globalSpeed">
                 <option value="0.25">0.25x - Quarter Speed Slow Motion</option>
                 <option value="0.5">0.5x - Half Speed Slow Motion</option>
@@ -156,11 +157,25 @@
               </select>
             </div>
             <div>
-              <p class="dim" style="margin-top:20px;">
-                Slows down or speeds up the entire video non-destructively via the MP4 Edit List (<code>elst</code>) without re-encoding. Segment rules below override this rate for specific time ranges.
-              </p>
+              <label for="outputRepeatCount">Output file repeat count (elst loop)</label>
+              <select id="outputRepeatCount">
+                <option value="1" selected>1x (Play Once - Standard)</option>
+                <option value="2">2x (Repeat Twice in Output File)</option>
+                <option value="3">3x (Repeat 3 Times in Output File)</option>
+                <option value="5">5x (Repeat 5 Times in Output File)</option>
+                <option value="10">10x (Repeat 10 Times in Output File)</option>
+              </select>
+            </div>
+            <div class="end">
+              <label class="inline" style="padding: 8px 0;">
+                <input type="checkbox" id="studioLoopCheckbox" checked>
+                Play continuously without stopping in Studio
+              </label>
             </div>
           </div>
+          <p class="dim">
+            <strong>Studio Loop</strong> repeats playback continuously in this editor without stopping. <strong>Output Repeat Count</strong> duplicates the Edit List (<code>elst</code>) entries so media players play the video multiple times in a row without adding a single byte to the file size.
+          </p>
         </div>
 
         <div class="box">
@@ -200,12 +215,26 @@
 
         <div class="box">
           <div class="between">
-            <h3>Audio sync offset</h3>
-            <button id="clearAudioSyncBtn" type="button" class="sm">Reset Sync (0ms)</button>
+            <h3>Output audio track control &amp; sync offset</h3>
+            <button id="clearAudioSyncBtn" type="button" class="sm">Reset Audio Settings</button>
           </div>
-          <label for="audioSyncMs">Delay / advance (milliseconds)</label>
-          <input type="number" id="audioSyncMs" step="50" value="0" placeholder="e.g. 250 or -250">
-          <p class="dim">Positive values add an empty edit before the audio track. Negative values shift audio start forward.</p>
+          <div class="grid2">
+            <div>
+              <label for="audioOutputMode">Audio in exported video</label>
+              <select id="audioOutputMode">
+                <option value="keep" selected>Keep Audio (Normal)</option>
+                <option value="hide">Hide / Mute Audio Non-Destructively (tkhd disabled &amp; vol=0, reversible)</option>
+                <option value="remove">Remove Audio Track from Output (strip soun trak header)</option>
+              </select>
+            </div>
+            <div>
+              <label for="audioSyncMs">Audio delay / advance (milliseconds)</label>
+              <input type="number" id="audioSyncMs" step="50" value="0" placeholder="e.g. 250 or -250">
+            </div>
+          </div>
+          <p class="dim">
+            <strong>Hide / Mute Non-Destructively</strong> disables the audio track header (<code>tkhd</code> flags = 0, volume = 0) so players play the video silently, while keeping the audio stream intact if you reload the file later. <strong>Remove Audio Track</strong> strips the audio <code>trak</code> box from <code>moov</code> completely.
+          </p>
         </div>
       </div>
 
