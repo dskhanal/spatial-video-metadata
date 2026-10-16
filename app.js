@@ -14,7 +14,7 @@ const STUDIO_TX3G_UUID = new Uint8Array([
   0x58, 0x33, 0x47, 0x2d, 0x53, 0x55, 0x42, 0x31
 ]);
 
-const SAMPLE_VIDEO_PATH = 'sample/mountain-top-night-sky.mp4';
+const SAMPLE_VIDEO_PATH = 'mountain-top-night-sky.mp4';
 
 // Pre-determined Studio selections applied when loading sample/mountain-top-night-sky.mp4
 const SAMPLE_PRESET_CONFIG = {
