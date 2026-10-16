@@ -21,25 +21,29 @@ const SAMPLE_PRESET_CONFIG = {
   globalSpeed: 1,
   outputRepeatCount: 1,
   studioLoop: true,
+  loopCrossfadeSec: 0.6,
+  smoothSlowMo: true,
+  conformStts: true,
   audioOutputMode: 'keep',
   timelineRules: [
-    { start: 1.0, end: 3.0, action: '2' },
-    { start: 3.5, end: 4.5, action: 'cut' }
+    { start: 0.5, end: 1.8, action: '0.5' },
+    { start: 2.0, end: 3.4, action: '2' },
+    { start: 3.6, end: 4.3, action: 'cut' }
   ],
   chapters: [
-    { time: 0.0, title: 'Base Camp Dusk' },
-    { time: 1.5, title: 'Zenith Starlight (2x Timelapse)' },
-    { time: 3.0, title: 'Aurora Horizon' }
+    { time: 0.0, title: 'Base Camp Dusk (Smooth 0.5x)' },
+    { time: 2.0, title: 'Zenith Starlight (2x Timelapse)' },
+    { time: 4.4, title: 'Aurora Horizon' }
   ],
   captions: [
-    { start: 0.2, end: 1.4, text: 'Looking up from the mountain ridge into the clear night sky.' },
-    { start: 1.5, end: 3.2, text: 'The Milky Way core rotates across the zenith in 2x timelapse.' },
-    { start: 4.6, end: 6.5, text: 'Airglow illuminates the distant alpine peaks along the horizon.' }
+    { start: 0.2, end: 1.7, text: 'Looking up from the mountain ridge in smooth 0.5x slow motion.' },
+    { start: 2.0, end: 3.4, text: 'The Milky Way core rotates across the zenith in 2x timelapse.' },
+    { start: 4.4, end: 6.5, text: 'Airglow illuminates the distant alpine peaks along the horizon.' }
   ],
   capLang: 'eng',
   capDefault: true,
   transcript:
-    'Looking up from the mountain ridge into the clear night sky.\n' +
+    'Looking up from the mountain ridge in smooth 0.5x slow motion.\n' +
     'The Milky Way core rotates across the zenith in 2x timelapse.\n' +
     'Airglow illuminates the distant alpine peaks along the horizon.',
   audioSyncMs: 0,
@@ -52,17 +56,20 @@ const SAMPLE_PRESET_CONFIG = {
   mirrorMode: 'none',
   metaTitle: 'Mountain Top Night Sky (360° Sample)',
   metaArtist: 'Astrophotography Spatial Lab',
-  metaComment: 'Pre-configured 360° equirectangular night sky sample with timelapse speed ramp, chapters, and captions.',
+  metaComment: 'Pre-configured 360° equirectangular night sky sample with smooth slow-mo, timelapse speed ramp, gapless loop, chapters, and captions.',
   metaGps: '-43.4965, 171.5361'
 };
 
 let videoDuration = 0;
-let globalSpeed = 1;       // Default playback rate for entire video (0.25x to 4x)
-let studioLoop = true;     // Continuous playback in Studio without stopping
-let outputRepeatCount = 1; // Number of times to repeat playable segments in output MP4 elst
-let timelineRules = [];    // Array of { start, end, action: 'cut' | '0.25' | '0.5' | '0.75' | '1.25' | '1.5' | '2' | '4' | '0' }
-let chapters = [];         // Array of { time, title }
-let captions = [];         // Array of { start, end, text }
+let globalSpeed = 1;         // Default playback rate for entire video (0.25x to 4x)
+let studioLoop = true;       // Continuous gapless playback in Studio without stopping
+let loopCrossfadeSec = 0.6;  // Crossfade window (sec) between tail and pre-buffered loop start
+let smoothSlowMo = true;     // Sub-frame WebGL/Canvas frame blending on slow-mo (<1x)
+let conformStts = true;      // Scale native MP4 stts sample deltas when globalSpeed < 1
+let outputRepeatCount = 1;   // Number of times to repeat playable segments in output MP4 elst
+let timelineRules = [];      // Array of { start, end, action }
+let chapters = [];           // Array of { time, title }
+let captions = [];           // Array of { start, end, text }
 let editingRuleIdx = -1;
 let editingChapIdx = -1;
 let editingCaptionIdx = -1;
@@ -77,10 +84,10 @@ let currentCoverMime = '';
 let currentCoverUrl = '';
 
 // Live 360° WebGL Camera Orientation State
-let camYaw = 0;   // -180 to 180 degrees (Heading)
-let camPitch = 0; // -90 to 90 degrees (Tilt)
-let camRoll = 0;  // -180 to 180 degrees (Horizon roll)
-let camFov = 75;  // 30 to 110 degrees
+let camYaw = 0;
+let camPitch = 0;
+let camRoll = 0;
+let camFov = 75;
 
 let toastTimer = null;
 function showToast(msg, icon, isError = false) {
@@ -114,11 +121,74 @@ function switchToTab(tabId) {
 }
 
 /* =========================================================================
-   2. 360° EQUIRECTANGULAR WEBGL VIEWPORT (THREE.JS)
+   2. 360° WEBGL VIEWPORT + SUB-FRAME SLOW-MO & GAPLESS LOOP SHADER COMPOSITOR
    ========================================================================= */
-let scene, camera, renderer, sphereMesh, videoTexture, fallbackGridTexture;
+let scene, camera, renderer, sphereMesh, fallbackGridTexture, compCanvasTexture;
 let isDragging360 = false;
 let prevPointerX = 0, prevPointerY = 0;
+
+// Offscreen Frame Buffers for Smooth Slow-Mo Interpolation & Gapless Loop Crossfade
+const prevFrameCanvas = document.createElement('canvas');
+const currFrameCanvas = document.createElement('canvas');
+const compFrameCanvas = document.createElement('canvas');
+prevFrameCanvas.width = currFrameCanvas.width = compFrameCanvas.width = 1280;
+prevFrameCanvas.height = currFrameCanvas.height = compFrameCanvas.height = 720;
+const prevCtx = prevFrameCanvas.getContext('2d');
+const currCtx = currFrameCanvas.getContext('2d');
+const compCtx = compFrameCanvas.getContext('2d');
+
+let hasCapturedFrames = false;
+let lastDecodedMediaTime = -1;
+let lastFrameWallClockMs = performance.now();
+let estimatedFrameIntervalSec = 1 / 30; // Dynamically measured from video frames
+let isCrossfadingLoop = false;
+
+function syncFrameBufferDimensions(w, h) {
+  const targetW = Math.min(2048, Math.max(640, w || 1280));
+  const targetH = Math.min(1024, Math.max(360, h || 720));
+  if (compFrameCanvas.width !== targetW || compFrameCanvas.height !== targetH) {
+    prevFrameCanvas.width = currFrameCanvas.width = compFrameCanvas.width = targetW;
+    prevFrameCanvas.height = currFrameCanvas.height = compFrameCanvas.height = targetH;
+    const flatCanvas = document.getElementById('flatCanvas');
+    flatCanvas.width = targetW;
+    flatCanvas.height = targetH;
+    hasCapturedFrames = false;
+  }
+}
+
+// Capture newly decoded video frames so slow-motion can interpolate between prevFrame and currFrame
+function captureDecodedVideoFrame(nowMs, mediaTimeSec) {
+  if (!video.videoWidth || !video.videoHeight) return;
+  syncFrameBufferDimensions(video.videoWidth, video.videoHeight);
+
+  const deltaMedia = Math.abs(mediaTimeSec - lastDecodedMediaTime);
+  if (deltaMedia > 0.002 && deltaMedia < 0.25) {
+    estimatedFrameIntervalSec = 0.8 * estimatedFrameIntervalSec + 0.2 * deltaMedia;
+  }
+
+  if (hasCapturedFrames) {
+    prevCtx.drawImage(currFrameCanvas, 0, 0);
+  } else {
+    prevCtx.drawImage(video, 0, 0, prevFrameCanvas.width, prevFrameCanvas.height);
+  }
+  currCtx.drawImage(video, 0, 0, currFrameCanvas.width, currFrameCanvas.height);
+
+  hasCapturedFrames = true;
+  lastDecodedMediaTime = mediaTimeSec;
+  lastFrameWallClockMs = nowMs;
+}
+
+function registerVideoFrameListener(vidEl) {
+  if ('requestVideoFrameCallback' in vidEl) {
+    const onFrame = (now, metadata) => {
+      if (vidEl === video) {
+        captureDecodedVideoFrame(now, metadata.mediaTime);
+      }
+      vidEl.requestVideoFrameCallback(onFrame);
+    };
+    vidEl.requestVideoFrameCallback(onFrame);
+  }
+}
 
 function createFallbackEquirectGridTexture() {
   const c = document.createElement('canvas');
@@ -173,6 +243,10 @@ function init360WebGL() {
   geometry.scale(-1, 1, 1);
 
   fallbackGridTexture = createFallbackEquirectGridTexture();
+  compCanvasTexture = new THREE.CanvasTexture(compFrameCanvas);
+  compCanvasTexture.minFilter = THREE.LinearFilter;
+  compCanvasTexture.magFilter = THREE.LinearFilter;
+
   const material = new THREE.MeshBasicMaterial({ map: fallbackGridTexture });
   sphereMesh = new THREE.Mesh(geometry, material);
   scene.add(sphereMesh);
@@ -249,8 +323,126 @@ function updateSavedPoseBadge() {
     `Yaw: ${y.toFixed(1)}° | Pitch: ${p.toFixed(1)}° | Roll: ${r.toFixed(1)}°`;
 }
 
-function animateWebGL() {
+// Get first and last playable timestamps (accounting for any cuts at the start or end)
+function getPlayableLoopBounds() {
+  const dur = videoDuration || 0;
+  if (dur <= 0) return { startSec: 0, endSec: 0 };
+  const segs = buildPlayableSegments(dur, 1);
+  if (!segs.length) return { startSec: 0, endSec: dur };
+  const first = segs[0];
+  const last = segs[segs.length - 1];
+  return {
+    startSec: first.start,
+    endSec: last.start + last.mediaDuration
+  };
+}
+
+// 60Hz High-Precision Loop Monitor, Sub-Frame Slow-Mo Blender & Dual-Decoder Crossfader
+function renderCompositeVideoFrame(nowMs) {
+  if (!video.src || video.readyState < 2 || !videoDuration) return;
+
+  const t = video.currentTime;
+  const { startSec, endSec } = getPlayableLoopBounds();
+  const activeRate = video.playbackRate || 1;
+  const w = compFrameCanvas.width;
+  const h = compFrameCanvas.height;
+
+  // Fallback frame capture for browsers without requestVideoFrameCallback
+  if (!('requestVideoFrameCallback' in video)) {
+    if (Math.abs(t - lastDecodedMediaTime) >= 0.015) {
+      captureDecodedVideoFrame(nowMs, t);
+    }
+  }
+
+  // 1. Draw base video frame (with Sub-Frame Slow-Motion Interpolation if rate < 1x)
+  const useSlowMoBlend = smoothSlowMo && activeRate < 0.99 && !video.paused && hasCapturedFrames;
+  if (useSlowMoBlend) {
+    // Calculate how far along we are between the last decoded frame and the next expected frame
+    const wallElapsedSec = Math.max(0, (nowMs - lastFrameWallClockMs) / 1000);
+    const expectedRealWaitSec = estimatedFrameIntervalSec / Math.max(0.1, activeRate);
+    // Smooth hermite curve (smoothstep) between prevFrame and currFrame
+    const rawAlpha = Math.min(1, wallElapsedSec / Math.max(0.016, expectedRealWaitSec));
+    const smoothAlpha = rawAlpha * rawAlpha * (3 - 2 * rawAlpha);
+
+    compCtx.globalAlpha = 1.0;
+    compCtx.drawImage(prevFrameCanvas, 0, 0, w, h);
+    compCtx.globalAlpha = smoothAlpha;
+    compCtx.drawImage(currFrameCanvas, 0, 0, w, h);
+    compCtx.globalAlpha = 1.0;
+  } else {
+    compCtx.globalAlpha = 1.0;
+    compCtx.drawImage(video, 0, 0, w, h);
+  }
+
+  // 2. Gapless Continuous Loop Handling (Zero Stop/Hiccup at End)
+  if (studioLoop && !video.paused && endSec > startSec + 0.2) {
+    const fadeWindow = Math.min(loopCrossfadeSec, (endSec - startSec) * 0.4);
+    const timeRemaining = endSec - t;
+
+    if (fadeWindow > 0.05) {
+      // Crossfade mode: start standby loopBufferVideo during tail window and blend seamlessly
+      if (timeRemaining <= fadeWindow && timeRemaining > 0.02) {
+        if (!isCrossfadingLoop) {
+          isCrossfadingLoop = true;
+          loopBufferVideo.playbackRate = activeRate;
+          if (Math.abs(loopBufferVideo.currentTime - startSec) > 0.15) {
+            loopBufferVideo.currentTime = startSec;
+          }
+          loopBufferVideo.play().catch(() => {});
+        }
+        const fadeProgress = Math.max(0, Math.min(1, 1 - (timeRemaining / fadeWindow)));
+        const smoothFade = fadeProgress * fadeProgress * (3 - 2 * fadeProgress);
+        if (loopBufferVideo.readyState >= 2) {
+          compCtx.globalAlpha = smoothFade;
+          compCtx.drawImage(loopBufferVideo, 0, 0, w, h);
+          compCtx.globalAlpha = 1.0;
+        }
+      } else if (timeRemaining <= 0.03) {
+        // Complete the handoff before the main video hits EOF and stalls
+        const seamlessResumeTime = isCrossfadingLoop && !loopBufferVideo.paused
+          ? loopBufferVideo.currentTime
+          : startSec;
+        isCrossfadingLoop = false;
+        loopBufferVideo.pause();
+        video.currentTime = Math.max(startSec, seamlessResumeTime);
+        if (video.paused) video.play().catch(() => {});
+        // Re-prime standby decoder back to loop start for next cycle
+        setTimeout(() => {
+          if (loopBufferVideo.src) loopBufferVideo.currentTime = startSec;
+        }, 60);
+      } else if (isCrossfadingLoop && timeRemaining > fadeWindow + 0.1) {
+        isCrossfadingLoop = false;
+        loopBufferVideo.pause();
+        loopBufferVideo.currentTime = startSec;
+      }
+    } else {
+      // Instant 0.0s pre-EOF jump (triggers 35ms before EOF so hardware decoder never enters ended state)
+      if (timeRemaining <= 0.035) {
+        if (loopBufferVideo.readyState >= 2) {
+          compCtx.globalAlpha = 1.0;
+          compCtx.drawImage(loopBufferVideo, 0, 0, w, h);
+        }
+        video.currentTime = startSec;
+        if (video.paused) video.play().catch(() => {});
+      }
+    }
+  }
+
+  // Push composited frame to both 360° WebGL texture and 2D Flat Canvas
+  if (compCanvasTexture) {
+    compCanvasTexture.needsUpdate = true;
+  }
+  const flatCanvas = document.getElementById('flatCanvas');
+  if (!flatCanvas.classList.contains('hidden')) {
+    const fCtx = flatCanvas.getContext('2d');
+    fCtx.drawImage(compFrameCanvas, 0, 0, flatCanvas.width, flatCanvas.height);
+  }
+}
+
+function animateWebGL(nowMs) {
   requestAnimationFrame(animateWebGL);
+  renderCompositeVideoFrame(nowMs || performance.now());
+
   if (!renderer || !scene || !camera) return;
 
   const yawRad = THREE.MathUtils.degToRad(-camYaw);
@@ -269,13 +461,17 @@ function animateWebGL() {
    3. VIEWPORT CONTROLS & INITIAL ANGLE CAPTURE
    ========================================================================= */
 const video = document.getElementById('videoPreview');
+const loopBufferVideo = document.getElementById('loopBufferVideo');
+const flatCanvas = document.getElementById('flatCanvas');
 const webglContainer = document.getElementById('webglContainer');
 const mode360Btn = document.getElementById('mode360Btn');
 const modeFlatBtn = document.getElementById('modeFlatBtn');
 
+registerVideoFrameListener(video);
+
 mode360Btn.addEventListener('click', () => {
   webglContainer.classList.remove('hidden');
-  video.classList.add('hidden');
+  flatCanvas.classList.add('hidden');
   mode360Btn.classList.add('active');
   modeFlatBtn.classList.remove('active');
   resizeWebGL();
@@ -283,7 +479,7 @@ mode360Btn.addEventListener('click', () => {
 
 modeFlatBtn.addEventListener('click', () => {
   webglContainer.classList.add('hidden');
-  video.classList.remove('hidden');
+  flatCanvas.classList.remove('hidden');
   modeFlatBtn.classList.add('active');
   mode360Btn.classList.remove('active');
 });
@@ -338,7 +534,11 @@ document.getElementById('resetViewBtn').addEventListener('click', () => {
 const fileInput = document.getElementById('fileInput');
 const playPauseBtn = document.getElementById('playPauseBtn');
 const loopToggleBtn = document.getElementById('loopToggleBtn');
+const smoothSlowMoToggleBtn = document.getElementById('smoothSlowMoToggleBtn');
 const studioLoopCheckbox = document.getElementById('studioLoopCheckbox');
+const smoothSlowMoCheckbox = document.getElementById('smoothSlowMoCheckbox');
+const conformSttsCheckbox = document.getElementById('conformSttsCheckbox');
+const loopCrossfadeSelect = document.getElementById('loopCrossfadeSec');
 const outputRepeatCountSelect = document.getElementById('outputRepeatCount');
 const audioOutputModeSelect = document.getElementById('audioOutputMode');
 const seekBar = document.getElementById('seekBar');
@@ -349,20 +549,50 @@ const globalSpeedSelect = document.getElementById('globalSpeed');
 
 function setStudioLoopState(enabled) {
   studioLoop = !!enabled;
-  video.loop = studioLoop;
   studioLoopCheckbox.checked = studioLoop;
   loopToggleBtn.classList.toggle('active', studioLoop);
-  loopToggleBtn.textContent = studioLoop ? 'Loop: On' : 'Loop: Off';
+  loopToggleBtn.textContent = studioLoop ? 'Loop: Gapless' : 'Loop: Off';
+  renderMetadataInspector();
+}
+
+function setSmoothSlowMoState(enabled) {
+  smoothSlowMo = !!enabled;
+  smoothSlowMoCheckbox.checked = smoothSlowMo;
+  smoothSlowMoToggleBtn.classList.toggle('active', smoothSlowMo);
+  smoothSlowMoToggleBtn.textContent = smoothSlowMo ? 'Smooth Slo-Mo: On' : 'Smooth Slo-Mo: Off';
+  applyCurrentPlaybackSpeed(video.currentTime || 0);
+  renderMetadataInspector();
 }
 
 loopToggleBtn.addEventListener('click', () => {
   setStudioLoopState(!studioLoop);
-  showToast(studioLoop ? 'Continuous Studio loop enabled.' : 'Continuous Studio loop disabled.', '');
+  showToast(studioLoop ? 'Gapless continuous loop enabled.' : 'Continuous loop disabled.', '');
 });
 
 studioLoopCheckbox.addEventListener('change', (e) => {
   setStudioLoopState(e.target.checked);
-  showToast(studioLoop ? 'Continuous Studio loop enabled.' : 'Continuous Studio loop disabled.', '');
+  showToast(studioLoop ? 'Gapless continuous loop enabled.' : 'Continuous loop disabled.', '');
+});
+
+smoothSlowMoToggleBtn.addEventListener('click', () => {
+  setSmoothSlowMoState(!smoothSlowMo);
+  showToast(smoothSlowMo ? 'Smooth Slow-Mo sub-frame blending enabled.' : 'Smooth Slow-Mo blending disabled.', '');
+});
+
+smoothSlowMoCheckbox.addEventListener('change', (e) => {
+  setSmoothSlowMoState(e.target.checked);
+  showToast(smoothSlowMo ? 'Smooth Slow-Mo sub-frame blending enabled.' : 'Smooth Slow-Mo blending disabled.', '');
+});
+
+conformSttsCheckbox.addEventListener('change', (e) => {
+  conformStts = e.target.checked;
+  renderMetadataInspector();
+});
+
+loopCrossfadeSelect.addEventListener('change', (e) => {
+  loopCrossfadeSec = parseFloat(e.target.value) || 0;
+  renderMetadataInspector();
+  showToast(`Set gapless loop crossfade window to ${loopCrossfadeSec.toFixed(1)}s.`, '');
 });
 
 outputRepeatCountSelect.addEventListener('change', (e) => {
@@ -413,9 +643,12 @@ document.getElementById('resetSpeedBtn').addEventListener('click', () => {
   setGlobalSpeedValue(1);
   outputRepeatCount = 1;
   outputRepeatCountSelect.value = '1';
+  loopCrossfadeSec = 0.6;
+  loopCrossfadeSelect.value = '0.6';
   setStudioLoopState(true);
+  setSmoothSlowMoState(true);
   renderMetadataInspector();
-  showToast('Reset global speed to 1x and output repeat count to 1x.', '');
+  showToast('Reset global speed, smooth slow-mo, and gapless loop to defaults.', '');
 });
 
 function validateMp4MovBuffer(fileName, buffer) {
@@ -654,17 +887,23 @@ function loadBufferIntoStudio(buf, fileName, mimeType, presetOverride = null) {
 
   const blob = new Blob([buf], { type: loadedFileMime });
   const blobUrl = URL.createObjectURL(blob);
+
+  hasCapturedFrames = false;
+  lastDecodedMediaTime = -1;
+  isCrossfadingLoop = false;
+
+  // Bind both primary decoder and pre-buffered loop decoder
   video.src = blobUrl;
-  video.loop = studioLoop;
+  video.loop = false; // Handled by our gapless dual-decoder loop engine before EOF
   video.load();
+
+  loopBufferVideo.src = blobUrl;
+  loopBufferVideo.muted = true;
+  loopBufferVideo.load();
 
   document.getElementById('emptyVideoOverlay').classList.add('hidden');
 
-  if (videoTexture) videoTexture.dispose();
-  videoTexture = new THREE.VideoTexture(video);
-  videoTexture.minFilter = THREE.LinearFilter;
-  videoTexture.magFilter = THREE.LinearFilter;
-  sphereMesh.material.map = videoTexture;
+  sphereMesh.material.map = compCanvasTexture;
   sphereMesh.material.needsUpdate = true;
 
   timelineRules = [];
@@ -693,7 +932,13 @@ function loadBufferIntoStudio(buf, fileName, mimeType, presetOverride = null) {
     setGlobalSpeedValue(saved.globalSpeed || 1);
     outputRepeatCount = saved.outputRepeatCount || 1;
     outputRepeatCountSelect.value = String(outputRepeatCount);
-    if (saved.studioLoop !== undefined) setStudioLoopState(saved.studioLoop);
+    loopCrossfadeSec = saved.loopCrossfadeSec ?? 0.6;
+    loopCrossfadeSelect.value = String(loopCrossfadeSec);
+    setStudioLoopState(saved.studioLoop !== false);
+    setSmoothSlowMoState(saved.smoothSlowMo !== false);
+    conformStts = saved.conformStts !== false;
+    conformSttsCheckbox.checked = conformStts;
+
     audioOutputModeSelect.value = saved.audioOutputMode || nativeMeta.audioOutputMode || 'keep';
     syncAudioPreviewWithOutputMode();
 
@@ -723,15 +968,16 @@ function loadBufferIntoStudio(buf, fileName, mimeType, presetOverride = null) {
     renderAll();
 
     if (presetOverride) {
-      showToast(`Loaded "${fileName}" with pre-determined 360° pose, speed ramp, chapters & captions!`, '');
+      showToast(`Loaded "${fileName}" with smooth 0.5x slow-mo, 2x timelapse, and gapless loop!`, '');
       showStatus(
         `Loaded sample "${fileName}" (${loadedFileInfo.sizeMB} MB, ${loadedFileInfo.resolution}, tracks: ${loadedFileInfo.tracks.join(', ')}) with pre-determined selections:\n` +
         `• 360° Initial Pose: Yaw ${camYaw}°, Pitch ${camPitch}°, Roll ${camRoll}°\n` +
-        `• Edit List Rules: ${timelineRules.length} rule(s) (2x timelapse & cut)\n` +
+        `• Smooth Slow-Mo & Edit Rules: ${timelineRules.length} rule(s) (0.5x interpolated slow-mo, 2x timelapse & cut)\n` +
+        `• Gapless Loop Crossfade: ${loopCrossfadeSec}s dual-decoder transition\n` +
         `• Chapters: ${chapters.length} chapter markers | Captions: ${captions.length} timed cues`
       );
     } else {
-      showToast('Restored saved Studio edits, speed, audio mode, 360° pose & metadata from file!', '');
+      showToast('Restored saved Studio edits, smooth slow-mo, gapless loop & metadata from file!', '');
       showStatus(`Restored Studio State & native atoms from "${fileName}" (${loadedFileInfo.resolution}, ${loadedFileInfo.tracks.join('/')} tracks).`);
     }
   } else {
@@ -840,8 +1086,19 @@ video.addEventListener('loadedmetadata', () => {
       .filter(c => c.end > c.start);
   }
 
+  // Prime standby loop decoder to first playable timestamp
+  const { startSec } = getPlayableLoopBounds();
+  if (loopBufferVideo.src) {
+    loopBufferVideo.currentTime = startSec;
+  }
+
   updateLiveCaptionOverlay(video.currentTime || 0);
   renderAll();
+});
+
+video.addEventListener('loadeddata', () => {
+  captureDecodedVideoFrame(performance.now(), video.currentTime || 0);
+  renderCompositeVideoFrame(performance.now());
 });
 
 playPauseBtn.addEventListener('click', () => {
@@ -851,6 +1108,8 @@ playPauseBtn.addEventListener('click', () => {
     playPauseBtn.textContent = 'Pause';
   } else {
     video.pause();
+    loopBufferVideo.pause();
+    isCrossfadingLoop = false;
     playPauseBtn.textContent = 'Play';
   }
 });
@@ -858,9 +1117,10 @@ playPauseBtn.addEventListener('click', () => {
 video.addEventListener('play', () => { playPauseBtn.textContent = 'Pause'; });
 video.addEventListener('pause', () => { playPauseBtn.textContent = 'Play'; });
 video.addEventListener('ended', () => {
+  // Backup safety net in case tab was backgrounded when hitting EOF
   if (studioLoop) {
-    const segs = buildPlayableSegments(videoDuration || 10);
-    video.currentTime = segs.length ? segs[0].start : 0;
+    const { startSec } = getPlayableLoopBounds();
+    video.currentTime = startSec;
     video.play().catch(() => {});
   } else {
     playPauseBtn.textContent = 'Play';
@@ -875,6 +1135,7 @@ muteBtn.addEventListener('click', () => {
 
 seekBar.addEventListener('input', () => {
   if (!videoDuration) return;
+  hasCapturedFrames = false;
   video.currentTime = parseFloat(seekBar.value);
 });
 
@@ -882,6 +1143,7 @@ document.getElementById('timelineBar').addEventListener('click', (e) => {
   if (!videoDuration) return;
   const rect = e.currentTarget.getBoundingClientRect();
   const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+  hasCapturedFrames = false;
   video.currentTime = ratio * videoDuration;
 });
 
@@ -910,10 +1172,9 @@ function applyCurrentPlaybackSpeed(t) {
   for (const r of timelineRules) {
     if (t >= r.start && t < r.end) {
       if (r.action === 'cut') {
-        // If cut reaches the end of the video and studioLoop is enabled, wrap seamlessly to start
         if (r.end >= (videoDuration - 0.05) && studioLoop) {
-          const segs = buildPlayableSegments(videoDuration || 10);
-          video.currentTime = segs.length ? segs[0].start : 0;
+          const { startSec } = getPlayableLoopBounds();
+          video.currentTime = startSec;
           if (video.paused) video.play().catch(() => {});
         } else {
           video.currentTime = r.end;
@@ -928,10 +1189,10 @@ function applyCurrentPlaybackSpeed(t) {
   if (video.src && video.playbackRate !== activeRate) {
     video.playbackRate = activeRate;
   }
-  document.getElementById('liveSpeedBadge').textContent = `${activeRate}x`;
+  const interpSuffix = (smoothSlowMo && activeRate < 1) ? ' Smooth' : '';
+  document.getElementById('liveSpeedBadge').textContent = `${activeRate}x${interpSuffix}`;
 }
 
-// Live Non-Destructive Cut Skipping, Speed Ramp, Continuous Loop & Caption Overlay Preview
 video.addEventListener('timeupdate', () => {
   const t = video.currentTime;
   seekBar.value = t;
@@ -981,6 +1242,8 @@ document.getElementById('addRuleBtn').addEventListener('click', () => {
   timelineRules.sort((a, b) => a.start - b.start);
   renderAll();
   applyCurrentPlaybackSpeed(video.currentTime || 0);
+  const { startSec } = getPlayableLoopBounds();
+  if (loopBufferVideo.src) loopBufferVideo.currentTime = startSec;
   showToast(`Saved timeline rule (${s.toFixed(1)}s - ${e.toFixed(1)}s).`, '');
 });
 
@@ -1039,6 +1302,8 @@ function clearCategory(category) {
     setGlobalSpeedValue(1);
     outputRepeatCount = 1;
     outputRepeatCountSelect.value = '1';
+    loopCrossfadeSec = 0.6;
+    loopCrossfadeSelect.value = '0.6';
     showToast('Reset global speed to 1x and output repeat count to 1x.', '');
   } else if (category === 'rules') {
     timelineRules = [];
@@ -1200,9 +1465,9 @@ function renderMetadataInspector() {
       clearKey: null
     },
     {
-      cat: 'Global Speed & Repeat Loop',
-      atom: 'trak -> edts -> elst',
-      val: `Speed: ${globalSpeed}x | Output File Repeat: ${outputRepeatCount}x | Studio Continuous Loop: ${studioLoop ? 'On' : 'Off'}`,
+      cat: 'Speed, Smooth Slo-Mo & Loop',
+      atom: 'elst / stts / WebGL',
+      val: `Speed: ${globalSpeed}x | Smooth Slo-Mo Blending: ${smoothSlowMo ? 'On' : 'Off'} | stts Conform: ${conformStts ? 'On' : 'Off'} | Studio Loop: ${studioLoop ? `Gapless (${loopCrossfadeSec}s fade)` : 'Off'} | Output Repeat: ${outputRepeatCount}x`,
       editTab: 'tab-edits',
       clearKey: 'speed'
     },
@@ -1347,7 +1612,15 @@ function renderAll() {
     div.textContent = isCut ? 'CUT' : `${r.action}x`;
     overlays.appendChild(div);
 
-    const desc = isCut ? 'Cut / Skipped' : (r.action === '0' ? 'Freeze Frame (0x)' : `Speed ${r.action}x`);
+    const rateNum = parseFloat(r.action);
+    const desc = isCut
+      ? 'Cut / Skipped'
+      : r.action === '0'
+      ? 'Freeze Frame (0x)'
+      : rateNum < 1
+      ? `Smooth Slow-Mo ${r.action}x`
+      : `Fast Speed ${r.action}x`;
+
     const li = document.createElement('li');
     const span = document.createElement('span');
     span.innerHTML = `<strong>${r.start.toFixed(2)}s - ${r.end.toFixed(2)}s</strong> &middot; ${desc}`;
@@ -1792,7 +2065,7 @@ document.getElementById('downloadTranscriptTxtBtn').addEventListener('click', ()
 });
 
 /* =========================================================================
-   7. ISOBMFF / MP4 BINARY ATOM PARSERS & BUILDERS (INCLUDING tx3g & ©lyr)
+   7. ISOBMFF / MP4 BINARY ATOM PARSERS & BUILDERS (INCLUDING stts CONFORM)
    ========================================================================= */
 function buildPlayableSegments(duration, repeatCount = 1) {
   let cursor = 0;
@@ -1866,15 +2139,49 @@ function packIso639Lang(langStr) {
   return ((c1 & 0x1f) << 10) | ((c2 & 0x1f) << 5) | (c3 & 0x1f);
 }
 
-// Non-destructively enable or hide/mute an audio track's tkhd atom
+// Scale stts sample_delta ticks inside a video track for native slow-motion frame-rate conforming
+function scaleTrackSttsAndMdhd(mdiaSlice, slowMoFactor) {
+  if (!slowMoFactor || slowMoFactor === 1) return;
+  const view = new DataView(mdiaSlice.buffer, mdiaSlice.byteOffset, mdiaSlice.byteLength);
+  const mdiaChildren = parseAtoms(view, 8, mdiaSlice.byteLength);
+
+  // Scale mdhd duration
+  const mdhd = mdiaChildren.find(a => a.type === 'mdhd');
+  if (mdhd) {
+    const ver = view.getUint8(mdhd.dataStart);
+    if (ver === 1) {
+      const oldDur = Number(view.getBigUint64(mdhd.dataStart + 24, false));
+      view.setBigUint64(mdhd.dataStart + 24, BigInt(Math.round(oldDur * slowMoFactor)), false);
+    } else {
+      const oldDur = view.getUint32(mdhd.dataStart + 16, false);
+      view.setUint32(mdhd.dataStart + 16, Math.round(oldDur * slowMoFactor), false);
+    }
+  }
+
+  // Scale stts sample_delta entries inside minf -> stbl -> stts
+  const minf = mdiaChildren.find(a => a.type === 'minf');
+  if (!minf) return;
+  const stbl = parseAtoms(view, minf.dataStart, minf.end).find(a => a.type === 'stbl');
+  if (!stbl) return;
+  const stts = parseAtoms(view, stbl.dataStart, stbl.end).find(a => a.type === 'stts');
+  if (!stts || stts.size < 16) return;
+
+  const entryCount = view.getUint32(stts.dataStart + 4, false);
+  for (let i = 0; i < entryCount; i++) {
+    const deltaPos = stts.dataStart + 8 + i * 8 + 4;
+    if (deltaPos + 4 <= stts.end) {
+      const oldDelta = view.getUint32(deltaPos, false);
+      view.setUint32(deltaPos, Math.max(1, Math.round(oldDelta * slowMoFactor)), false);
+    }
+  }
+}
+
 function applyAudioTkhdState(tkhdBytes, hideAudio) {
   const view = new DataView(tkhdBytes.buffer, tkhdBytes.byteOffset, tkhdBytes.byteLength);
   const version = view.getUint8(8);
-  // Flags are at bytes 9..11 (or 32-bit version+flags at offset 8)
   const verFlags = (version << 24) | (hideAudio ? 0x000000 : 0x000003);
   view.setUint32(8, verFlags >>> 0, false);
 
-  // Volume (16-bit 8.8 fixed point) is at offset 8 + 36 (v0) or 8 + 48 (v1)
   const volOffset = 8 + (version === 1 ? 48 : 36);
   if (tkhdBytes.byteLength >= volOffset + 2) {
     view.setUint16(volOffset, hideAudio ? 0x0000 : 0x0100, false);
@@ -2354,7 +2661,6 @@ function rebuildMp4Container(buffer, config) {
     const isVideo = handlerSub === 'vide';
     const isAudio = handlerSub === 'soun';
 
-    // If user chose to strip/remove audio track completely from output moov
     if (isAudio && config.audioOutputMode === 'remove') {
       continue;
     }
@@ -2374,6 +2680,19 @@ function rebuildMp4Container(buffer, config) {
       }
     }
 
+    // If user enabled native stts slow-mo conform and globalSpeed < 1 without segment overrides
+    const canConformVideoStts = isVideo && config.conformStts && config.globalSpeed < 1 && (!config.timelineRules || config.timelineRules.length === 0);
+    const sttsFactor = canConformVideoStts ? (1 / config.globalSpeed) : 1;
+
+    // If stts is natively stretched by 1/globalSpeed, elst segments for video should use rate=1 and scaled media times
+    const trackSegments = canConformVideoStts
+      ? config.segments.map(s => ({
+          start: s.start * sttsFactor,
+          mediaDuration: s.mediaDuration * sttsFactor,
+          rate: 1
+        }))
+      : config.segments;
+
     const trakParts = [];
     for (const tc of trakChildren) {
       if (tc.type === 'edts') continue;
@@ -2392,10 +2711,13 @@ function rebuildMp4Container(buffer, config) {
       if (tc.type === 'tkhd' && isAudio) {
         applyAudioTkhdState(slice, config.audioOutputMode === 'hide');
       }
+      if (tc.type === 'mdia' && canConformVideoStts) {
+        scaleTrackSttsAndMdhd(slice, sttsFactor);
+      }
       trakParts.push(slice);
 
       if (tc.type === 'tkhd') {
-        trakParts.push(buildEdtsAtom(config.segments, mvhdTimescale, mdhdTimescale, isAudio, config.audioSyncMs));
+        trakParts.push(buildEdtsAtom(trackSegments, mvhdTimescale, mdhdTimescale, isAudio, config.audioSyncMs));
       }
     }
 
@@ -2490,6 +2812,9 @@ async function runExportAndDownload() {
     globalSpeed,
     outputRepeatCount,
     studioLoop,
+    loopCrossfadeSec,
+    smoothSlowMo,
+    conformStts,
     audioOutputMode,
     timelineRules,
     chapters,
@@ -2539,13 +2864,13 @@ async function runExportAndDownload() {
     showToast(`Saved & downloaded "${a.download}" instantaneously!`, '');
     showStatus(
       `Saved "${a.download}" instantaneously without re-encoding!\n` +
-      `• Global Speed & Repeat (elst): Default ${globalSpeed}x, Repeat ${outputRepeatCount}x (${segments.length} total segment entries)\n` +
+      `• Speed, Smooth Slo-Mo & Repeat: Global ${globalSpeed}x (Smooth Blend: ${smoothSlowMo ? 'On' : 'Off'}, stts Conform: ${conformStts ? 'On' : 'Off'}), Repeat ${outputRepeatCount}x\n` +
+      `• Gapless Studio Loop: ${studioLoop ? `Enabled (${loopCrossfadeSec}s crossfade)` : 'Disabled'}\n` +
       `• Audio Track Mode: ${audioOutputMode.toUpperCase()} (Sync Offset: ${studioState.audioSyncMs}ms)\n` +
       `• 360° Spatial (uuid): ${studioState.spatialEnabled ? `Enabled (${studioState.stereoMode}, Initial Yaw${studioState.initYaw}°, Pitch ${studioState.initPitch}°, Roll${studioState.initRoll}°)` : 'Disabled'}\n` +
       `• Geometry (tkhd): Rotation ${studioState.rotationDeg}°, Mirror: ${studioState.mirrorMode}\n` +
       `• Captions (tx3g): ${captions.length} cue(s) (${capLang}, Default: ${capDefault ? 'Yes' : 'No'})\n` +
-      `• Transcript (©lyr): ${transcript ? `${transcript.length} chars saved` : 'None'}\n` +
-      `• User Data (udta): ${chapters.length} chapter(s), Cover Art: ${currentCoverBytes ? 'Embedded' : 'None'}, State UUID: Saved`
+      `• Transcript (©lyr): ${transcript ? `${transcript.length} chars saved` : 'None'}`
     );
   } catch (err) {
     showToast(err.message, '', true);
