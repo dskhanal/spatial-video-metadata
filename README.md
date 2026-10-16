@@ -1,4 +1,4 @@
-# MP4/MOV Spatial Metadata Studio
+# Spatial Metadata Studio - 360&deg; MP4/MOV video Non-destructive editor
 
 **Live Demo:** [https://dskhanal.github.io/spatial-video-metadata/](https://dskhanal.github.io/spatial-video-metadata/)
 
