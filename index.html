@@ -17,7 +17,7 @@
   <main>
     <header>
       <h1>MP4/MOV Spatial Metadata Studio</h1>
-      <p>Non-destructive 360&deg; view, edit list, rotation, chapters and tags. No re-encoding.</p>
+      <p>Non-destructive 360&deg; view, edit list, rotation, chapters, captions (tx3g), transcript and tags. No re-encoding.</p>
     </header>
 
     <section>
@@ -37,7 +37,7 @@
           <label for="playheadDisplay">Playhead</label>
           <div class="inline">
             <input type="text" id="playheadDisplay" readonly value="0.00s / 0.00s" size="16">
-            <button id="grabTimeBtn" type="button" title="Copy playhead time into inputs">Grab</button>
+            <button id="grabTimeBtn" type="button" title="Copy playhead time into cut, chapter, and caption inputs">Grab</button>
           </div>
         </div>
       </div>
@@ -72,6 +72,9 @@
         </div>
 
         <video id="videoPreview" playsinline crossorigin="anonymous" class="hidden"></video>
+
+        <!-- Live Caption Preview Overlay (Shown in both 360 and Flat modes) -->
+        <div id="captionOverlay" class="hidden"></div>
 
         <div id="emptyVideoOverlay">
           <p><strong>No video loaded</strong></p>
@@ -110,6 +113,7 @@
         <button type="button" class="tab-btn" data-tab="tab-geometry">3. Rotate &amp; Mirror</button>
         <button type="button" class="tab-btn" data-tab="tab-chapters">4. Chapters</button>
         <button type="button" class="tab-btn" data-tab="tab-catalog">5. Tags &amp; Cover</button>
+        <button type="button" class="tab-btn" data-tab="tab-captions">6. Captions &amp; Transcript</button>
       </div>
 
       <!-- TAB 1 -->
@@ -263,6 +267,117 @@
           </div>
           <label for="coverInput">Cover art (JPEG or PNG)</label>
           <input type="file" id="coverInput" accept="image/jpeg,image/png">
+        </div>
+      </div>
+
+      <!-- TAB 6: CAPTIONS & TRANSCRIPT -->
+      <div id="tab-captions" class="tab-panel hidden">
+        <!-- 6A. Native Browser Auto-Caption Generator -->
+        <div class="box">
+          <div class="between">
+            <h3>Auto-Generate Captions (Native Browser Web Speech API)</h3>
+            <span id="speechSupportBadge" class="dim">Checking browser speech support...</span>
+          </div>
+          <p class="dim" style="margin-bottom:10px;">
+            Uses your browser's built-in SpeechRecognition engine with zero external model downloads. Ensure your speakers or loopback audio are audible to your microphone input while the video plays, or speak directly to dictate live captions synced to the video playhead.
+          </p>
+          <div class="grid3">
+            <div>
+              <label for="speechRecognitionLang">Browser speech locale</label>
+              <select id="speechRecognitionLang">
+                <option value="en-US">English (US - en-US)</option>
+                <option value="en-AU">English (Australia - en-AU)</option>
+                <option value="en-GB">English (UK - en-GB)</option>
+                <option value="es-ES">Spanish (es-ES)</option>
+                <option value="fr-FR">French (fr-FR)</option>
+                <option value="de-DE">German (de-DE)</option>
+                <option value="it-IT">Italian (it-IT)</option>
+                <option value="pt-BR">Portuguese (pt-BR)</option>
+                <option value="ja-JP">Japanese (ja-JP)</option>
+                <option value="ko-KR">Korean (ko-KR)</option>
+                <option value="zh-CN">Chinese (zh-CN)</option>
+                <option value="hi-IN">Hindi (hi-IN)</option>
+              </select>
+            </div>
+            <div class="end">
+              <button id="autoCaptionBtn" type="button" class="primary">Start Auto-Captioning (Play &amp; Listen)</button>
+            </div>
+            <div class="end">
+              <button id="dictateOnlyBtn" type="button">Dictate at Current Playhead</button>
+            </div>
+          </div>
+          <div id="speechLiveBanner" class="speech-live-box hidden">
+            <strong>Live Speech:</strong> <span id="speechLiveText">Listening...</span>
+          </div>
+        </div>
+
+        <!-- 6B. Track Settings & SRT/VTT Import / Download -->
+        <div class="box">
+          <h3>Subtitle Track Settings (MP4 tx3g) &amp; File Import / Export</h3>
+          <div class="grid3">
+            <div>
+              <label for="capFileInput">Import .srt or .vtt (replaces list)</label>
+              <input type="file" id="capFileInput" accept=".srt,.vtt,text/vtt,application/x-subrip">
+            </div>
+            <div>
+              <label for="capLang">Track language (3-letter ISO-639-2)</label>
+              <input type="text" id="capLang" maxlength="3" value="eng" placeholder="eng">
+            </div>
+            <div class="end">
+              <label class="inline" style="padding: 8px 0;">
+                <input type="checkbox" id="capDefault" checked>
+                Show captions by default (tkhd enabled)
+              </label>
+            </div>
+          </div>
+
+          <div class="inline" style="margin-top: 6px;">
+            <button id="downloadSrtBtn" type="button">Download .SRT</button>
+            <button id="downloadVttBtn" type="button">Download .VTT</button>
+            <button id="downloadCapTxtBtn" type="button">Download Timestamped .TXT</button>
+            <button id="clearCaptionsBtn" type="button">Clear All Captions</button>
+          </div>
+        </div>
+
+        <!-- 6C. Add / Edit Individual Captions -->
+        <div class="box">
+          <div class="between">
+            <h3>Add or Edit Caption Cues</h3>
+            <span class="dim">Edit any cue directly in the list below — changes save automatically</span>
+          </div>
+          <div class="grid4">
+            <div>
+              <label for="capStart">Start (sec)</label>
+              <input type="number" id="capStart" step="0.1" min="0" value="0">
+            </div>
+            <div>
+              <label for="capEnd">End (sec)</label>
+              <input type="number" id="capEnd" step="0.1" min="0" value="3">
+            </div>
+            <div>
+              <label for="capText">Caption text</label>
+              <input type="text" id="capText" placeholder="Type caption text...">
+            </div>
+            <div class="end">
+              <button id="addCapBtn" type="button" class="primary">+ Add / Save Cue</button>
+            </div>
+          </div>
+          <ul id="capList" class="list"></ul>
+        </div>
+
+        <!-- 6D. Transcript (©lyr) -->
+        <div class="box">
+          <div class="between">
+            <h3>Full Text Transcript (saved in MP4 &copy;lyr atom &amp; Studio state)</h3>
+            <div class="inline">
+              <button id="buildTranscriptBtn" type="button">Build from Captions</button>
+              <button id="downloadTranscriptTxtBtn" type="button">Download Transcript (.TXT)</button>
+            </div>
+          </div>
+          <textarea id="transcriptText" placeholder="Full video transcript... Click 'Build from Captions' to populate from your caption cues, or edit freely before exporting."></textarea>
+          <p class="dim">
+            Saved inside the MP4 lyrics tag (<code>&copy;lyr</code>) and Studio state UUID. Reloading an exported MP4/MOV restores both captions and transcript.
+          </p>
         </div>
       </div>
 
