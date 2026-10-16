@@ -9,10 +9,17 @@ const STUDIO_STATE_UUID = new Uint8Array([
   0x50, 0x41, 0x4e, 0x4f, 0x50, 0x54, 0x4f, 0x2d,
   0x53, 0x54, 0x55, 0x44, 0x49, 0x4f, 0x32, 0x30
 ]);
+// Marker UUID placed inside the Studio's generated tx3g subtitle trak so re-exporting replaces it cleanly
+const STUDIO_TX3G_UUID = new Uint8Array([
+  0x53, 0x54, 0x55, 0x44, 0x49, 0x4f, 0x2d, 0x54,
+  0x58, 0x33, 0x47, 0x2d, 0x53, 0x55, 0x42, 0x31
+]);
 
 let videoDuration = 0;
 let timelineRules = []; // Array of { start, end, action: 'cut' | '2' | '4' | '0.5' | '0' }
 let chapters = [];      // Array of { time, title }
+let captions = [];      // Array of { start, end, text }
+let editingCaptionIdx = -1;
 let loadedFileBuffer = null;
 
 // Live 360° WebGL Camera Orientation State
@@ -98,7 +105,6 @@ function init360WebGL() {
   renderer.setSize(width, height);
   container.insertBefore(renderer.domElement, container.firstChild);
 
-  // Inverted sphere geometry so equirectangular texture maps on the inside
   const geometry = new THREE.SphereGeometry(500, 64, 48);
   geometry.scale(-1, 1, 1);
 
@@ -107,7 +113,6 @@ function init360WebGL() {
   sphereMesh = new THREE.Mesh(geometry, material);
   scene.add(sphereMesh);
 
-  // Pointer / Touch Drag Events for Yaw & Pitch
   const dom = renderer.domElement;
   dom.addEventListener('pointerdown', (e) => {
     isDragging360 = true;
@@ -123,7 +128,6 @@ function init360WebGL() {
     prevPointerX = e.clientX;
     prevPointerY = e.clientY;
 
-    // Update Yaw (-180 to 180) and Pitch (-90 to 90)
     camYaw = normalizeYaw(camYaw - dx * 0.25);
     camPitch = Math.max(-89.9, Math.min(89.9, camPitch + dy * 0.25));
     updateCameraHUD();
@@ -134,7 +138,6 @@ function init360WebGL() {
     try { dom.releasePointerCapture(e.pointerId); } catch (_) {}
   });
 
-  // Mouse Wheel Zoom (FOV)
   dom.addEventListener('wheel', (e) => {
     e.preventDefault();
     camFov = Math.max(30, Math.min(110, camFov + e.deltaY * 0.04));
@@ -143,7 +146,6 @@ function init360WebGL() {
     updateCameraHUD();
   }, { passive: false });
 
-  // Responsive Resize
   window.addEventListener('resize', resizeWebGL);
 
   updateCameraHUD();
@@ -187,7 +189,6 @@ function animateWebGL() {
   requestAnimationFrame(animateWebGL);
   if (!renderer || !scene || !camera) return;
 
-  // Convert spherical Yaw, Pitch, Roll into camera Euler rotation (YXZ order)
   const yawRad = THREE.MathUtils.degToRad(-camYaw);
   const pitchRad = THREE.MathUtils.degToRad(camPitch);
   const rollRad = THREE.MathUtils.degToRad(camRoll);
@@ -272,8 +273,8 @@ const fileInput = document.getElementById('fileInput');
 const playPauseBtn = document.getElementById('playPauseBtn');
 const seekBar = document.getElementById('seekBar');
 const muteBtn = document.getElementById('muteBtn');
+const captionOverlay = document.getElementById('captionOverlay');
 
-// Verify strict .mp4 / .mov extension AND binary ISOBMFF magic header at offset 4
 function validateMp4MovFile(file, buffer) {
   const extMatch = /\.(mp4|mov)$/i.test(file.name);
   if (!extMatch) {
@@ -307,7 +308,6 @@ fileInput.addEventListener('change', async () => {
 
     document.getElementById('emptyVideoOverlay').classList.add('hidden');
 
-    // Bind HTML5 video as live WebGL equirectangular texture
     if (videoTexture) videoTexture.dispose();
     videoTexture = new THREE.VideoTexture(video);
     videoTexture.minFilter = THREE.LinearFilter;
@@ -317,12 +317,21 @@ fileInput.addEventListener('change', async () => {
 
     timelineRules = [];
     chapters = [];
+    captions = [];
+    editingCaptionIdx = -1;
+    document.getElementById('transcriptText').value = '';
 
-    // Check if file already contains our STUDIO_STATE_UUID atom to restore edits
+    // Restore Studio State UUID or fallback ©lyr transcript if present
     const saved = extractStudioState(buf);
+    const embeddedLyr = extractLyricsAtom(buf);
+
     if (saved) {
       timelineRules = saved.timelineRules || [];
       chapters = saved.chapters || [];
+      captions = saved.captions || [];
+      document.getElementById('capLang').value = saved.capLang || 'eng';
+      document.getElementById('capDefault').checked = saved.capDefault !== false;
+      document.getElementById('transcriptText').value = saved.transcript || embeddedLyr || '';
       document.getElementById('audioSyncMs').value = saved.audioSyncMs || 0;
       document.getElementById('spatialEnabled').value = String(saved.spatialEnabled ?? true);
       document.getElementById('stereoMode').value = saved.stereoMode || 'none';
@@ -342,12 +351,17 @@ fileInput.addEventListener('change', async () => {
       document.getElementById('liveRollSlider').value = camRoll;
       updateCameraHUD();
       updateSavedPoseBadge();
+      renderAll();
 
-      showToast('Restored saved non-destructive edits & 360° pose from file metadata!', '');
+      showToast('Restored saved edits, 360° pose, captions & transcript from file!', '');
       showStatus(`Restored previous Studio State from embedded UUID atom in "${file.name}".`);
     } else {
+      if (embeddedLyr) {
+        document.getElementById('transcriptText').value = embeddedLyr;
+      }
+      renderAll();
       showToast(`Loaded verified ${file.name.split('.').pop().toUpperCase()} video.`, '');
-      showStatus(`Verified genuine ${file.name.split('.').pop().toUpperCase()} container (${(file.size / 1024 / 1024).toFixed(2)} MB). Drag the 360° viewport or add timeline cuts below.`);
+      showStatus(`Verified genuine ${file.name.split('.').pop().toUpperCase()} container (${(file.size / 1024 / 1024).toFixed(2)} MB). Drag the 360° viewport, add cuts, or generate captions below.`);
     }
   } catch (err) {
     fileInput.value = '';
@@ -361,6 +375,7 @@ video.addEventListener('loadedmetadata', () => {
   videoDuration = video.duration || 0;
   seekBar.max = videoDuration;
   document.getElementById('ruleEnd').value = Math.min(2, videoDuration).toFixed(1);
+  document.getElementById('capEnd').value = Math.min(3, videoDuration).toFixed(1);
   renderAll();
 });
 
@@ -375,8 +390,11 @@ playPauseBtn.addEventListener('click', () => {
   }
 });
 
+video.addEventListener('play', () => { playPauseBtn.textContent = 'Pause'; });
+video.addEventListener('pause', () => { playPauseBtn.textContent = 'Play'; });
 video.addEventListener('ended', () => {
   playPauseBtn.textContent = 'Play';
+  if (isAutoCaptioning) stopBrowserSpeechRecognition();
 });
 
 muteBtn.addEventListener('click', () => {
@@ -396,7 +414,26 @@ document.getElementById('timelineBar').addEventListener('click', (e) => {
   video.currentTime = ratio * videoDuration;
 });
 
-// Live Non-Destructive Cut Skipping & Speed Ramp Preview
+function updateLiveCaptionOverlay(currentTime) {
+  const showDefault = document.getElementById('capDefault').checked;
+  if (!showDefault || !captions.length) {
+    captionOverlay.classList.add('hidden');
+    return;
+  }
+  const activeCues = captions.filter(c => currentTime >= c.start && currentTime <= c.end);
+  if (activeCues.length > 0) {
+    captionOverlay.textContent = activeCues.map(c => c.text).join('\n');
+    captionOverlay.classList.remove('hidden');
+  } else {
+    captionOverlay.classList.add('hidden');
+  }
+}
+
+document.getElementById('capDefault').addEventListener('change', () => {
+  updateLiveCaptionOverlay(video.currentTime || 0);
+});
+
+// Live Non-Destructive Cut Skipping, Speed Ramp & Caption Overlay Preview
 video.addEventListener('timeupdate', () => {
   const t = video.currentTime;
   seekBar.value = t;
@@ -405,6 +442,8 @@ video.addEventListener('timeupdate', () => {
   if (videoDuration > 0) {
     document.getElementById('timelinePlayhead').style.left = `${(t / videoDuration) * 100}%`;
   }
+
+  updateLiveCaptionOverlay(t);
 
   let activeRate = 1;
   for (const r of timelineRules) {
@@ -424,16 +463,20 @@ video.addEventListener('timeupdate', () => {
   document.getElementById('liveSpeedBadge').textContent = `${activeRate}x`;
 });
 
+// Grab button fills Cut, Chapter, and Caption start/end times
 document.getElementById('grabTimeBtn').addEventListener('click', () => {
   const t = video.currentTime.toFixed(2);
+  const maxDur = videoDuration || 60;
   document.getElementById('ruleStart').value = t;
-  document.getElementById('ruleEnd').value = Math.min(videoDuration || 10, video.currentTime + 2).toFixed(2);
+  document.getElementById('ruleEnd').value = Math.min(maxDur, video.currentTime + 2).toFixed(2);
   document.getElementById('chapTime').value = t;
-  showToast(`Grabbed playhead timestamp: ${t}s`, '');
+  document.getElementById('capStart').value = t;
+  document.getElementById('capEnd').value = Math.min(maxDur, video.currentTime + 3).toFixed(2);
+  showToast(`Grabbed playhead time (${t}s) into Cut, Chapter, and Caption inputs.`, '');
 });
 
 /* =========================================================================
-   5. TABS, TIMELINE RULES & CHAPTER MARKER UI
+   5. TABS, TIMELINE RULES, CHAPTERS & CAPTIONS UI
    ========================================================================= */
 document.querySelectorAll('.tab-btn').forEach(btn => {
   btn.addEventListener('click', () => {
@@ -473,13 +516,63 @@ document.getElementById('addChapBtn').addEventListener('click', () => {
   showToast(`Added Chapter "${title}" at ${time.toFixed(1)}s.`, '');
 });
 
+// Add or Update Caption Cue
+document.getElementById('addCapBtn').addEventListener('click', () => {
+  const s = parseFloat(document.getElementById('capStart').value);
+  const e = parseFloat(document.getElementById('capEnd').value);
+  const text = document.getElementById('capText').value.trim();
+  if (isNaN(s) || isNaN(e) || s < 0 || s >= e) {
+    return showToast('Caption end time must be greater than start time.', '', true);
+  }
+  if (!text) {
+    return showToast('Please enter caption text.', '', true);
+  }
+
+  if (editingCaptionIdx >= 0 && editingCaptionIdx < captions.length) {
+    captions[editingCaptionIdx] = { start: s, end: e, text };
+    editingCaptionIdx = -1;
+    document.getElementById('addCapBtn').textContent = '+ Add / Save Cue';
+    showToast('Updated caption cue.', '');
+  } else {
+    captions.push({ start: s, end: e, text });
+    showToast(`Added caption (${s.toFixed(1)}s - ${e.toFixed(1)}s).`, '');
+  }
+
+  captions.sort((a, b) => a.start - b.start);
+  document.getElementById('capStart').value = e.toFixed(2);
+  document.getElementById('capEnd').value = (e + 3).toFixed(2);
+  document.getElementById('capText').value = '';
+  renderAll();
+  updateLiveCaptionOverlay(video.currentTime || 0);
+});
+
+document.getElementById('clearCaptionsBtn').addEventListener('click', () => {
+  captions = [];
+  editingCaptionIdx = -1;
+  document.getElementById('addCapBtn').textContent = '+ Add / Save Cue';
+  renderAll();
+  updateLiveCaptionOverlay(video.currentTime || 0);
+  showToast('Cleared all captions from the list.', '');
+});
+
+document.getElementById('buildTranscriptBtn').addEventListener('click', () => {
+  if (!captions.length) {
+    return showToast('No captions in the list to build a transcript from.', '', true);
+  }
+  const sorted = [...captions].sort((a, b) => a.start - b.start);
+  document.getElementById('transcriptText').value = sorted.map(c => c.text).join('\n');
+  showToast('Built transcript from caption list.', '');
+});
+
 function renderAll() {
   const overlays = document.getElementById('timelineOverlays');
   const ruleList = document.getElementById('ruleList');
   const chapList = document.getElementById('chapList');
+  const capList = document.getElementById('capList');
   overlays.innerHTML = '';
   ruleList.innerHTML = '';
   chapList.innerHTML = '';
+  capList.innerHTML = '';
   const maxDur = videoDuration || 60;
 
   timelineRules.forEach((r, idx) => {
@@ -525,9 +618,369 @@ function renderAll() {
     li.appendChild(delBtn);
     chapList.appendChild(li);
   });
+
+  // Render inline-editable caption list
+  captions.forEach((cap, idx) => {
+    const li = document.createElement('li');
+    li.className = 'cap-item';
+
+    const startInput = document.createElement('input');
+    startInput.type = 'number';
+    startInput.step = '0.1';
+    startInput.min = '0';
+    startInput.value = Number(cap.start).toFixed(2);
+    startInput.title = 'Caption Start (sec)';
+    startInput.addEventListener('change', () => {
+      const val = parseFloat(startInput.value);
+      if (!isNaN(val) && val >= 0 && val < cap.end) {
+        cap.start = val;
+        captions.sort((a, b) => a.start - b.start);
+        renderAll();
+        updateLiveCaptionOverlay(video.currentTime || 0);
+      } else {
+        startInput.value = Number(cap.start).toFixed(2);
+      }
+    });
+
+    const endInput = document.createElement('input');
+    endInput.type = 'number';
+    endInput.step = '0.1';
+    endInput.min = '0';
+    endInput.value = Number(cap.end).toFixed(2);
+    endInput.title = 'Caption End (sec)';
+    endInput.addEventListener('change', () => {
+      const val = parseFloat(endInput.value);
+      if (!isNaN(val) && val > cap.start) {
+        cap.end = val;
+        renderAll();
+        updateLiveCaptionOverlay(video.currentTime || 0);
+      } else {
+        endInput.value = Number(cap.end).toFixed(2);
+      }
+    });
+
+    const textInput = document.createElement('input');
+    textInput.type = 'text';
+    textInput.value = cap.text;
+    textInput.title = 'Edit caption text directly';
+    textInput.addEventListener('input', () => {
+      cap.text = textInput.value;
+      updateLiveCaptionOverlay(video.currentTime || 0);
+    });
+
+    const actionsDiv = document.createElement('div');
+    actionsDiv.className = 'cap-actions';
+
+    const seekBtn = document.createElement('button');
+    seekBtn.type = 'button';
+    seekBtn.textContent = 'Seek';
+    seekBtn.onclick = () => {
+      if (video.src) video.currentTime = cap.start;
+    };
+
+    const editBtn = document.createElement('button');
+    editBtn.type = 'button';
+    editBtn.textContent = 'Form';
+    editBtn.title = 'Load into top form';
+    editBtn.onclick = () => {
+      editingCaptionIdx = idx;
+      document.getElementById('capStart').value = cap.start.toFixed(2);
+      document.getElementById('capEnd').value = cap.end.toFixed(2);
+      document.getElementById('capText').value = cap.text;
+      document.getElementById('addCapBtn').textContent = 'Update Cue #' + (idx + 1);
+    };
+
+    const delBtn = document.createElement('button');
+    delBtn.type = 'button';
+    delBtn.textContent = 'Remove';
+    delBtn.onclick = () => {
+      captions.splice(idx, 1);
+      if (editingCaptionIdx === idx) {
+        editingCaptionIdx = -1;
+        document.getElementById('addCapBtn').textContent = '+ Add / Save Cue';
+      }
+      renderAll();
+      updateLiveCaptionOverlay(video.currentTime || 0);
+    };
+
+    actionsDiv.appendChild(seekBtn);
+    actionsDiv.appendChild(editBtn);
+    actionsDiv.appendChild(delBtn);
+
+    li.appendChild(startInput);
+    li.appendChild(endInput);
+    li.appendChild(textInput);
+    li.appendChild(actionsDiv);
+    capList.appendChild(li);
+  });
 }
 
-// Convert user's timeline rules into contiguous playable elst segments
+/* =========================================================================
+   6. NATIVE BROWSER AUTO-CAPTIONING (WEB SPEECH API) & SRT/VTT/TXT I/O
+   ========================================================================= */
+const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
+let speechRecognizer = null;
+let isAutoCaptioning = false;
+let currentPhraseStartSec = null;
+
+const speechSupportBadge = document.getElementById('speechSupportBadge');
+const autoCaptionBtn = document.getElementById('autoCaptionBtn');
+const dictateOnlyBtn = document.getElementById('dictateOnlyBtn');
+const speechLiveBanner = document.getElementById('speechLiveBanner');
+const speechLiveText = document.getElementById('speechLiveText');
+
+if (SpeechRecognitionAPI) {
+  speechSupportBadge.textContent = 'Native Web Speech API Ready';
+} else {
+  speechSupportBadge.textContent = 'Web Speech API unavailable in this browser (use Chrome/Edge/Safari)';
+}
+
+// Sync 3-letter ISO-639-2 code when user changes speech recognition locale
+document.getElementById('speechRecognitionLang').addEventListener('change', (e) => {
+  const loc = e.target.value;
+  const map = {
+    'en-US': 'eng', 'en-AU': 'eng', 'en-GB': 'eng',
+    'es-ES': 'spa', 'fr-FR': 'fra', 'de-DE': 'deu',
+    'it-IT': 'ita', 'pt-BR': 'por', 'ja-JP': 'jpn',
+    'ko-KR': 'kor', 'zh-CN': 'zho', 'hi-IN': 'hin'
+  };
+  if (map[loc]) document.getElementById('capLang').value = map[loc];
+});
+
+function startBrowserSpeechRecognition(syncVideoPlayback) {
+  if (!SpeechRecognitionAPI) {
+    return showToast('Your browser does not support native SpeechRecognition. Try Chrome, Edge, or Safari.', '', true);
+  }
+  if (isAutoCaptioning) {
+    stopBrowserSpeechRecognition();
+    return;
+  }
+
+  speechRecognizer = new SpeechRecognitionAPI();
+  speechRecognizer.lang = document.getElementById('speechRecognitionLang').value || 'en-US';
+  speechRecognizer.continuous = true;
+  speechRecognizer.interimResults = true;
+
+  currentPhraseStartSec = video.currentTime || 0;
+  isAutoCaptioning = true;
+
+  speechLiveBanner.classList.remove('hidden');
+  speechLiveText.textContent = 'Listening for speech...';
+  autoCaptionBtn.textContent = 'Stop Auto-Captioning';
+  dictateOnlyBtn.textContent = 'Stop Listening';
+
+  if (syncVideoPlayback && video.src && video.paused) {
+    video.muted = false;
+    muteBtn.textContent = 'Audio';
+    video.play().catch(() => {});
+  }
+
+  speechRecognizer.onresult = (event) => {
+    const nowSec = video.currentTime || 0;
+    let interimStr = '';
+
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const res = event.results[i];
+      const transcriptChunk = res[0].transcript.trim();
+      if (!transcriptChunk) continue;
+
+      if (currentPhraseStartSec === null) {
+        currentPhraseStartSec = Math.max(0, nowSec - 0.8);
+      }
+
+      if (res.isFinal) {
+        const startSec = Number(Math.max(0, currentPhraseStartSec).toFixed(2));
+        const endSec = Number(Math.max(startSec + 0.8, nowSec).toFixed(2));
+        captions.push({ start: startSec, end: endSec, text: transcriptChunk });
+        captions.sort((a, b) => a.start - b.start);
+        currentPhraseStartSec = null;
+        speechLiveText.textContent = `[Added ${startSec.toFixed(1)}s - ${endSec.toFixed(1)}s]: "${transcriptChunk}"`;
+        renderAll();
+        updateLiveCaptionOverlay(nowSec);
+      } else {
+        interimStr += transcriptChunk + ' ';
+      }
+    }
+
+    if (interimStr) {
+      speechLiveText.textContent = interimStr;
+    }
+  };
+
+  speechRecognizer.onerror = (e) => {
+    if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+      showToast('Microphone/speech permission denied by browser.', '', true);
+      stopBrowserSpeechRecognition();
+    } else if (e.error !== 'no-speech') {
+      speechLiveText.textContent = `Speech notice: ${e.error}`;
+    }
+  };
+
+  speechRecognizer.onend = () => {
+    // Automatically restart if still in active auto-captioning mode and video hasn't ended
+    if (isAutoCaptioning) {
+      try {
+        speechRecognizer.start();
+      } catch (_) {
+        stopBrowserSpeechRecognition();
+      }
+    }
+  };
+
+  try {
+    speechRecognizer.start();
+    showToast('Started native browser speech recognition.', '');
+  } catch (err) {
+    stopBrowserSpeechRecognition();
+    showToast('Could not start SpeechRecognition: ' + err.message, '', true);
+  }
+}
+
+function stopBrowserSpeechRecognition() {
+  isAutoCaptioning = false;
+  currentPhraseStartSec = null;
+  if (speechRecognizer) {
+    try { speechRecognizer.onend = null; speechRecognizer.stop(); } catch (_) {}
+    speechRecognizer = null;
+  }
+  speechLiveBanner.classList.add('hidden');
+  autoCaptionBtn.textContent = 'Start Auto-Captioning (Play & Listen)';
+  dictateOnlyBtn.textContent = 'Dictate at Current Playhead';
+  showToast('Stopped browser speech captioning.', '');
+}
+
+autoCaptionBtn.addEventListener('click', () => startBrowserSpeechRecognition(true));
+dictateOnlyBtn.addEventListener('click', () => startBrowserSpeechRecognition(false));
+
+// Parse SRT or WebVTT timestamps ("00:01:23,450" or "01:23.450") into seconds
+function parseSubTimestamp(str) {
+  const clean = str.trim().replace(',', '.');
+  const parts = clean.split(':');
+  if (parts.length === 3) {
+    return parseFloat(parts[0]) * 3600 + parseFloat(parts[1]) * 60 + parseFloat(parts[2]);
+  } else if (parts.length === 2) {
+    return parseFloat(parts[0]) * 60 + parseFloat(parts[1]);
+  }
+  return parseFloat(clean) || 0;
+}
+
+function parseSrtOrVtt(content) {
+  const blocks = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split(/\n\s*\n/);
+  const parsed = [];
+  for (const block of blocks) {
+    const lines = block.split('\n').map(l => l.trim()).filter(Boolean);
+    if (!lines.length || lines[0].startsWith('WEBVTT') || lines[0].startsWith('NOTE')) continue;
+
+    let timingLineIdx = lines.findIndex(l => l.includes('-->'));
+    if (timingLineIdx === -1) continue;
+
+    const timingParts = lines[timingLineIdx].split('-->');
+    if (timingParts.length < 2) continue;
+
+    const start = parseSubTimestamp(timingParts[0]);
+    const endToken = timingParts[1].trim().split(/\s+/)[0];
+    const end = parseSubTimestamp(endToken);
+    const textLines = lines.slice(timingLineIdx + 1).join('\n').replace(/<[^>]+>/g, '').trim();
+
+    if (!isNaN(start) && !isNaN(end) && end > start && textLines) {
+      parsed.push({ start: Number(start.toFixed(2)), end: Number(end.toFixed(2)), text: textLines });
+    }
+  }
+  return parsed.sort((a, b) => a.start - b.start);
+}
+
+document.getElementById('capFileInput').addEventListener('change', async (e) => {
+  if (!e.target.files.length) return;
+  const file = e.target.files[0];
+  try {
+    const text = await file.text();
+    const imported = parseSrtOrVtt(text);
+    if (!imported.length) {
+      return showToast(`No valid subtitle cues found in "${file.name}".`, '', true);
+    }
+    captions = imported;
+    editingCaptionIdx = -1;
+    renderAll();
+    updateLiveCaptionOverlay(video.currentTime || 0);
+    showToast(`Imported ${imported.length} caption cues from "${file.name}" (replaced list).`, '');
+  } catch (err) {
+    showToast('Failed to parse subtitle file: ' + err.message, '', true);
+  }
+});
+
+// Format seconds to SRT ("HH:MM:SS,mmm") or WebVTT ("HH:MM:SS.mmm")
+function formatSubTimestamp(sec, useComma) {
+  const totalMs = Math.max(0, Math.round(sec * 1000));
+  const hrs = Math.floor(totalMs / 3600000);
+  const mins = Math.floor((totalMs % 3600000) / 60000);
+  const secs = Math.floor((totalMs % 60000) / 1000);
+  const ms = totalMs % 1000;
+  const sep = useComma ? ',' : '.';
+  return (
+    String(hrs).padStart(2, '0') + ':' +
+    String(mins).padStart(2, '0') + ':' +
+    String(secs).padStart(2, '0') + sep +
+    String(ms).padStart(3, '0')
+  );
+}
+
+function downloadTextFile(content, suffix, mimeType) {
+  const baseName = fileInput.files.length
+    ? fileInput.files[0].name.replace(/\.[^.]+$/, '')
+    : 'captions';
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${baseName}${suffix}`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+document.getElementById('downloadSrtBtn').addEventListener('click', () => {
+  if (!captions.length) return showToast('No captions available to download.', '', true);
+  const sorted = [...captions].sort((a, b) => a.start - b.start);
+  const srt = sorted.map((c, i) =>
+    `${i + 1}\n${formatSubTimestamp(c.start, true)} --> ${formatSubTimestamp(c.end, true)}\n${c.text}\n`
+  ).join('\n');
+  downloadTextFile(srt, '.srt', 'text/plain;charset=utf-8');
+  showToast('Downloaded .SRT caption file.', '');
+});
+
+document.getElementById('downloadVttBtn').addEventListener('click', () => {
+  if (!captions.length) return showToast('No captions available to download.', '', true);
+  const sorted = [...captions].sort((a, b) => a.start - b.start);
+  const vtt = 'WEBVTT\n\n' + sorted.map((c, i) =>
+    `${i + 1}\n${formatSubTimestamp(c.start, false)} --> ${formatSubTimestamp(c.end, false)}\n${c.text}\n`
+  ).join('\n');
+  downloadTextFile(vtt, '.vtt', 'text/vtt;charset=utf-8');
+  showToast('Downloaded .VTT caption file.', '');
+});
+
+document.getElementById('downloadCapTxtBtn').addEventListener('click', () => {
+  if (!captions.length) return showToast('No captions available to download.', '', true);
+  const sorted = [...captions].sort((a, b) => a.start - b.start);
+  const txt = sorted.map(c =>
+    `[${formatSubTimestamp(c.start, false)} -> ${formatSubTimestamp(c.end, false)}] ${c.text}`
+  ).join('\n');
+  downloadTextFile(txt, '_captions.txt', 'text/plain;charset=utf-8');
+  showToast('Downloaded timestamped .TXT captions.', '');
+});
+
+document.getElementById('downloadTranscriptTxtBtn').addEventListener('click', () => {
+  let text = document.getElementById('transcriptText').value.trim();
+  if (!text && captions.length) {
+    text = [...captions].sort((a, b) => a.start - b.start).map(c => c.text).join('\n');
+    document.getElementById('transcriptText').value = text;
+  }
+  if (!text) return showToast('Transcript is empty. Type or click "Build from Captions" first.', '', true);
+  downloadTextFile(text, '_transcript.txt', 'text/plain;charset=utf-8');
+  showToast('Downloaded plain-text transcript (.TXT).', '');
+});
+
+/* =========================================================================
+   7. ISOBMFF / MP4 BINARY ATOM PARSERS & BUILDERS (INCLUDING tx3g & ©lyr)
+   ========================================================================= */
 function buildPlayableSegments(duration) {
   let cursor = 0;
   const segs = [];
@@ -546,9 +999,6 @@ function buildPlayableSegments(duration) {
   return segs;
 }
 
-/* =========================================================================
-   6. ISOBMFF / MP4 BINARY ATOM PARSERS & BUILDERS
-   ========================================================================= */
 function parseAtoms(view, start, end) {
   const atoms = [];
   let offset = start;
@@ -586,7 +1036,210 @@ function makeBox(type, payloadArrays) {
   return out;
 }
 
-// 6A. Spherical Video V1 UUID XML + Initial View Heading/Pitch/Roll
+// Pack 3-letter ISO-639-2 language code (e.g. "eng") into 16-bit MP4 mdhd code
+function packIso639Lang(langStr) {
+  const clean = (langStr || 'eng').toLowerCase().replace(/[^a-z]/g, '').padEnd(3, 'g').slice(0, 3);
+  const c1 = clean.charCodeAt(0) - 0x60;
+  const c2 = clean.charCodeAt(1) - 0x60;
+  const c3 = clean.charCodeAt(2) - 0x60;
+  return ((c1 & 0x1f) << 10) | ((c2 & 0x1f) << 5) | (c3 & 0x1f);
+}
+
+// Build standard MP4 `sbtl` / `tx3g` Timed Text subtitle track + mdat payload
+function buildTx3gSubtitleTrack(cues, rawVideoDuration, segments, mvhdTimescale, totalMvhdTicks, trackId, mdatFileOffset, langCode, isDefault, videoWidth, videoHeight) {
+  const mdhdTimescale = 1000; // 1000 ticks/sec (millisecond precision)
+  const sorted = [...cues]
+    .map(c => ({
+      start: Math.max(0, Number(c.start) || 0),
+      end: Math.max(0, Number(c.end) || 0),
+      text: String(c.text || '').trim()
+    }))
+    .filter(c => c.text.length > 0 && c.end > c.start)
+    .sort((a, b) => a.start - b.start);
+
+  // Convert overlapping or gapped cues into contiguous timed samples (empty string = clear screen)
+  const samples = [];
+  let cursorMs = 0;
+  const maxDurationMs = Math.max(
+    Math.round((rawVideoDuration || 10) * 1000),
+    sorted.length ? Math.round(sorted[sorted.length - 1].end * 1000) + 500 : 1000
+  );
+
+  for (const c of sorted) {
+    const sMs = Math.max(cursorMs, Math.round(c.start * 1000));
+    const eMs = Math.max(sMs + 50, Math.round(c.end * 1000));
+    if (sMs > cursorMs) {
+      samples.push({ durationTicks: sMs - cursorMs, text: '' });
+    }
+    samples.push({ durationTicks: eMs - sMs, text: c.text });
+    cursorMs = eMs;
+  }
+  if (cursorMs < maxDurationMs) {
+    samples.push({ durationTicks: maxDurationMs - cursorMs, text: '' });
+  }
+
+  // Encode each sample as [uint16 byteLength][UTF-8 bytes]
+  const sampleByteArrays = [];
+  const sampleSizes = [];
+  const sampleDurations = [];
+
+  for (const s of samples) {
+    const utf8 = new TextEncoder().encode(s.text);
+    const sampleBuf = new Uint8Array(2 + utf8.byteLength);
+    new DataView(sampleBuf.buffer).setUint16(0, utf8.byteLength, false);
+    sampleBuf.set(utf8, 2);
+    sampleByteArrays.push(sampleBuf);
+    sampleSizes.push(sampleBuf.byteLength);
+    sampleDurations.push(Math.max(1, s.durationTicks));
+  }
+
+  const mdatBox = makeBox('mdat', sampleByteArrays);
+  const chunkDataOffset = mdatFileOffset + 8; // Data starts immediately after 8-byte mdat header
+
+  // 1. tkhd (Track Header)
+  const tkhdPayload = new Uint8Array(84);
+  const tkView = new DataView(tkhdPayload.buffer);
+  // Flags: 0x000003 (Track_enabled | Track_in_movie) if default, else 0x000000
+  tkView.setUint32(0, isDefault ? 0x00000003 : 0x00000000, false);
+  tkView.setUint32(12, trackId, false);
+  tkView.setUint32(20, totalMvhdTicks, false);
+  // Standard identity matrix in tkhd
+  tkView.setInt32(40, 0x00010000, false);
+  tkView.setInt32(56, 0x00010000, false);
+  tkView.setInt32(72, 0x40000000, false);
+  const subW = videoWidth || 640;
+  const subH = Math.max(60, Math.round((videoHeight || 360) * 0.15));
+  tkView.setUint32(76, Math.round(subW * 65536), false);
+  tkView.setUint32(80, Math.round(subH * 65536), false);
+  const tkhdBox = makeBox('tkhd', [tkhdPayload]);
+
+  // 2. edts -> elst (Syncs subtitle timeline with cuts, speed ramps & freeze frames!)
+  const edtsBox = buildEdtsAtom(segments, mvhdTimescale, mdhdTimescale, false, 0);
+
+  // 3. mdia -> mdhd, elng, hdlr, minf
+  const totalMdhdDuration = sampleDurations.reduce((a, b) => a + b, 0);
+  const mdhdPayload = new Uint8Array(24);
+  const mdView = new DataView(mdhdPayload.buffer);
+  mdView.setUint32(12, mdhdTimescale, false);
+  mdView.setUint32(16, totalMdhdDuration, false);
+  mdView.setUint16(20, packIso639Lang(langCode), false);
+  const mdhdBox = makeBox('mdhd', [mdhdPayload]);
+
+  // Extended language tag (elng)
+  const cleanLangStr = (langCode || 'eng').toLowerCase().slice(0, 3);
+  const elngBytes = new TextEncoder().encode(cleanLangStr + '\0');
+  const elngBox = makeBox('elng', [new Uint8Array(4), elngBytes]);
+
+  // Handler Reference (hdlr = 'sbtl' for QuickTime/MP4 Timed Text)
+  const nameBytes = new TextEncoder().encode('SubtitleHandler\0');
+  const hdlrPayload = new Uint8Array(24 + nameBytes.byteLength);
+  writeFourCC(hdlrPayload, 8, 'sbtl');
+  hdlrPayload.set(nameBytes, 24);
+  const hdlrBox = makeBox('hdlr', [hdlrPayload]);
+
+  // 4. minf -> nmhd, dinf, stbl
+  const nmhdBox = makeBox('nmhd', [new Uint8Array(4)]);
+  const urlBox = makeBox('url ', [new Uint8Array([0, 0, 0, 1])]);
+  const drefPayload = new Uint8Array(8);
+  new DataView(drefPayload.buffer).setUint32(4, 1, false);
+  const drefBox = makeBox('dref', [drefPayload, urlBox]);
+  const dinfBox = makeBox('dinf', [drefBox]);
+
+  // Sample Description (stsd -> tx3g + ftab)
+  const fontName = new TextEncoder().encode('Arial');
+  const ftabPayload = new Uint8Array(2 + 2 + 1 + fontName.byteLength);
+  const ftView = new DataView(ftabPayload.buffer);
+  ftView.setUint16(0, 1, false); // 1 font entry
+  ftView.setUint16(2, 1, false); // Font ID 1
+  ftabPayload[4] = fontName.byteLength;
+  ftabPayload.set(fontName, 5);
+  const ftabBox = makeBox('ftab', [ftabPayload]);
+
+  const tx3gPayload = new Uint8Array(38);
+  const txView = new DataView(tx3gPayload.buffer);
+  txView.setUint16(6, 1, false); // data_reference_index = 1
+  txView.setInt16(12, 1, false); // horizontal justification = center (1)
+  txView.setInt16(14, -1, false); // vertical justification = bottom (-1)
+  // Background RGBA: semi-transparent black (0, 0, 0, 180)
+  tx3gPayload[16] = 0; tx3gPayload[17] = 0; tx3gPayload[18] = 0; tx3gPayload[19] = 180;
+  // Default text box (top, left, bottom, right)
+  txView.setInt16(20, 0, false);
+  txView.setInt16(22, 0, false);
+  txView.setInt16(24, subH, false);
+  txView.setInt16(26, subW, false);
+  // Style record (fontID=1, face=0, size=18, color=white RGBA 255,255,255,255)
+  txView.setUint16(32, 1, false);
+  tx3gPayload[34] = 0;
+  tx3gPayload[35] = 18;
+  tx3gPayload[36] = 255; tx3gPayload[37] = 255;
+  const tx3gRGBAEnd = new Uint8Array([255, 255]);
+  const tx3gBox = makeBox('tx3g', [tx3gPayload, tx3gRGBAEnd, ftabBox]);
+
+  const stsdHeader = new Uint8Array(8);
+  new DataView(stsdHeader.buffer).setUint32(4, 1, false);
+  const stsdBox = makeBox('stsd', [stsdHeader, tx3gBox]);
+
+  // stts (Time-to-Sample)
+  const sttsPayload = new Uint8Array(8 + sampleDurations.length * 8);
+  const sttsView = new DataView(sttsPayload.buffer);
+  sttsView.setUint32(4, sampleDurations.length, false);
+  for (let i = 0; i < sampleDurations.length; i++) {
+    sttsView.setUint32(8 + i * 8, 1, false);
+    sttsView.setUint32(12 + i * 8, sampleDurations[i], false);
+  }
+  const sttsBox = makeBox('stts', [sttsPayload]);
+
+  // stsc (Sample-to-Chunk: 1 chunk containing all subtitle samples)
+  const stscPayload = new Uint8Array(20);
+  const stscView = new DataView(stscPayload.buffer);
+  stscView.setUint32(4, 1, false);
+  stscView.setUint32(8, 1, false); // first_chunk = 1
+  stscView.setUint32(12, samples.length, false); // samples_per_chunk
+  stscView.setUint32(16, 1, false); // sample_description_index = 1
+  const stscBox = makeBox('stsc', [stscPayload]);
+
+  // stsz (Sample Sizes)
+  const stszPayload = new Uint8Array(12 + sampleSizes.length * 4);
+  const stszView = new DataView(stszPayload.buffer);
+  stszView.setUint32(4, 0, false);
+  stszView.setUint32(8, sampleSizes.length, false);
+  for (let i = 0; i < sampleSizes.length; i++) {
+    stszView.setUint32(12 + i * 4, sampleSizes[i], false);
+  }
+  const stszBox = makeBox('stsz', [stszPayload]);
+
+  // stco (Chunk Offset pointing to our appended subtitle mdat)
+  const stcoPayload = new Uint8Array(12);
+  const stcoView = new DataView(stcoPayload.buffer);
+  stcoView.setUint32(4, 1, false);
+  stcoView.setUint32(8, chunkDataOffset, false);
+  const stcoBox = makeBox('stco', [stcoPayload]);
+
+  const stblBox = makeBox('stbl', [stsdBox, sttsBox, stscBox, stszBox, stcoBox]);
+  const minfBox = makeBox('minf', [nmhdBox, dinfBox, stblBox]);
+  const mdiaBox = makeBox('mdia', [mdhdBox, elngBox, hdlrBox, minfBox]);
+
+  // Marker UUID inside our generated subtitle trak so re-exporting replaces it cleanly
+  const markerUuidBox = makeBox('uuid', [STUDIO_TX3G_UUID]);
+  const trakBox = makeBox('trak', [tkhdBox, edtsBox, mdiaBox, markerUuidBox]);
+
+  return { trakBox, mdatBox };
+}
+
+function isStudioSubtitleTrack(view, trakAtom) {
+  for (const child of parseAtoms(view, trakAtom.dataStart, trakAtom.end)) {
+    if (child.type === 'uuid' && child.size >= 24) {
+      let match = true;
+      for (let i = 0; i < 16; i++) {
+        if (view.getUint8(child.dataStart + i) !== STUDIO_TX3G_UUID[i]) match = false;
+      }
+      if (match) return true;
+    }
+  }
+  return false;
+}
+
+// 7A. Spherical Video V1 UUID XML + Initial View Heading/Pitch/Roll
 function buildSphericalUUID(stereoMode, yaw, pitch, roll) {
   const stereoTag = stereoMode !== 'none' ? `<GSpherical:StereoMode>${stereoMode}</GSpherical:StereoMode>\n` : '';
   const xml = `<?xml version="1.0"?>
@@ -603,7 +1256,7 @@ ${stereoTag}</rdf:SphericalVideo>`;
   return makeBox('uuid', [SPHERICAL_UUID, xmlBytes]);
 }
 
-// 6B. Custom Studio State UUID Atom
+// 7B. Custom Studio State UUID Atom
 function buildStudioStateUUID(stateObj) {
   const jsonBytes = new TextEncoder().encode(JSON.stringify(stateObj));
   return makeBox('uuid', [STUDIO_STATE_UUID, jsonBytes]);
@@ -628,12 +1281,30 @@ function extractStudioState(buffer) {
   return null;
 }
 
-// 6C. Edit List (`edts -> elst`) with Speed Ramps, Dwell Freeze & A/V Sync Offset
+// Read embedded ©lyr transcript if present in udta -> meta -> ilst
+function extractLyricsAtom(buffer) {
+  const view = new DataView(buffer);
+  const moov = parseAtoms(view, 0, buffer.byteLength).find(a => a.type === 'moov');
+  if (!moov) return '';
+  const udta = parseAtoms(view, moov.dataStart, moov.end).find(a => a.type === 'udta');
+  if (!udta) return '';
+  const meta = parseAtoms(view, udta.dataStart, udta.end).find(a => a.type === 'meta');
+  if (!meta) return '';
+  const ilst = parseAtoms(view, meta.dataStart + 4, meta.end).find(a => a.type === 'ilst');
+  if (!ilst) return '';
+  const lyr = parseAtoms(view, ilst.dataStart, ilst.end).find(a => a.type === '\xA9lyr');
+  if (!lyr) return '';
+  const dataAtom = parseAtoms(view, lyr.dataStart, lyr.end).find(a => a.type === 'data');
+  if (!dataAtom || dataAtom.size < 16) return '';
+  const strBytes = new Uint8Array(buffer, dataAtom.dataStart + 8, dataAtom.size - 16);
+  return new TextDecoder().decode(strBytes);
+}
+
+// 7C. Edit List (`edts -> elst`) with Speed Ramps, Dwell Freeze & A/V Sync Offset
 function buildEdtsAtom(segments, mvhdTimescale, mdhdTimescale, isAudio, audioSyncMs) {
   const entries = [];
   const syncOffsetSec = isAudio ? (audioSyncMs / 1000) : 0;
 
-  // Positive delay inserts an Empty Edit (media_time = -1)
   if (syncOffsetSec > 0) {
     entries.push({
       segDurationMvhd: Math.round(syncOffsetSec * mvhdTimescale),
@@ -662,7 +1333,7 @@ function buildEdtsAtom(segments, mvhdTimescale, mdhdTimescale, isAudio, audioSyn
 
   const elstPayload = new Uint8Array(8 + entries.length * 12);
   const view = new DataView(elstPayload.buffer);
-  view.setUint32(0, 0, false); // version 0, flags 0
+  view.setUint32(0, 0, false);
   view.setUint32(4, entries.length, false);
 
   let pos = 8;
@@ -678,7 +1349,7 @@ function buildEdtsAtom(segments, mvhdTimescale, mdhdTimescale, isAudio, audioSyn
   return makeBox('edts', [elstBox]);
 }
 
-// 6D. Lossless Rotation & Mirroring inside `tkhd` 36-Byte Transformation Matrix
+// 7D. Lossless Rotation & Mirroring inside `tkhd` 36-Byte Transformation Matrix
 function applyTkhdMatrix(tkhdBytes, rotationDeg, mirrorMode) {
   const view = new DataView(tkhdBytes.buffer, tkhdBytes.byteOffset, tkhdBytes.byteLength);
   const version = view.getUint8(8);
@@ -706,10 +1377,10 @@ function applyTkhdMatrix(tkhdBytes, rotationDeg, mirrorMode) {
   view.setInt32(matrixOffset + 20, 0, false);
   view.setInt32(matrixOffset + 24, toFixed16(tx), false);
   view.setInt32(matrixOffset + 28, toFixed16(ty), false);
-  view.setInt32(matrixOffset + 32, 0x40000000, false); // 1.0 in 2.30 fixed-point
+  view.setInt32(matrixOffset + 32, 0x40000000, false);
 }
 
-// 6E. User Data (`udta`) Builder: Chapters (`chpl`), GPS (`©xyz`), and Catalog/Cover (`meta -> ilst`)
+// 7E. User Data (`udta`) Builder: Chapters (`chpl`), GPS (`©xyz`), Lyrics Transcript (`©lyr`), and Catalog/Cover (`meta -> ilst`)
 function buildUdtaAtom(chapters, metaInfo, coverBytes, coverMime) {
   const udtaChildren = [];
 
@@ -763,6 +1434,7 @@ function buildUdtaAtom(chapters, metaInfo, coverBytes, coverMime) {
   addTextTag('\xA9nam', metaInfo.title);
   addTextTag('\xA9art', metaInfo.artist);
   addTextTag('\xA9cmt', metaInfo.comment);
+  addTextTag('\xA9lyr', metaInfo.transcript);
 
   if (coverBytes && coverBytes.byteLength > 0) {
     const dataHeader = new Uint8Array(8);
@@ -827,7 +1499,7 @@ function shiftChunkOffsets(view, start, end, delta) {
 }
 
 /* =========================================================================
-   7. MASTER MP4/MOV REBUILDER & EXPORT HANDLER
+   8. MASTER MP4/MOV REBUILDER & EXPORT HANDLER
    ========================================================================= */
 function rebuildMp4Container(buffer, config) {
   const workingBuf = buffer.slice(0);
@@ -849,6 +1521,8 @@ function rebuildMp4Container(buffer, config) {
   writeAtomDuration(view, mvhd, totalMvhdTicks);
 
   const newMoovParts = [];
+  let maxTrackId = 1;
+  let detectedVideoW = 640, detectedVideoH = 360;
 
   for (const child of moovChildren) {
     if (child.type === 'udta') continue;
@@ -865,6 +1539,11 @@ function rebuildMp4Container(buffer, config) {
       continue;
     }
 
+    // Replace previous Studio-generated tx3g subtitle track cleanly while leaving native/other subtitle tracks intact
+    if (isStudioSubtitleTrack(view, child)) {
+      continue;
+    }
+
     const trakChildren = parseAtoms(view, child.dataStart, child.end);
     const tkhd = trakChildren.find(a => a.type === 'tkhd');
     const mdia = trakChildren.find(a => a.type === 'mdia');
@@ -872,6 +1551,11 @@ function rebuildMp4Container(buffer, config) {
       newMoovParts.push(new Uint8Array(workingBuf, child.offset, child.size));
       continue;
     }
+
+    // Track highest existing track_ID
+    const tkVersion = view.getUint8(tkhd.dataStart);
+    const tId = view.getUint32(tkhd.dataStart + (tkVersion === 1 ? 20 : 12), false);
+    if (tId > maxTrackId) maxTrackId = tId;
 
     writeAtomDuration(view, tkhd, totalMvhdTicks);
 
@@ -885,6 +1569,15 @@ function rebuildMp4Container(buffer, config) {
     ) : '';
     const isVideo = handlerSub === 'vide';
     const isAudio = handlerSub === 'soun';
+
+    if (isVideo) {
+      const matOff = tkhd.dataStart + (tkVersion === 1 ? 52 : 40);
+      if (tkhd.end >= matOff + 44) {
+        const w = view.getUint32(matOff + 36, false) / 65536;
+        const h = view.getUint32(matOff + 40, false) / 65536;
+        if (w > 0 && h > 0) { detectedVideoW = w; detectedVideoH = h; }
+      }
+    }
 
     const trakParts = [];
     for (const tc of trakChildren) {
@@ -915,23 +1608,74 @@ function rebuildMp4Container(buffer, config) {
     newMoovParts.push(makeBox('trak', trakParts));
   }
 
-  const udtaBox = buildUdtaAtom(config.chapters, config.metaInfo, config.coverBytes, config.coverMime);
-  if (udtaBox) newMoovParts.push(udtaBox);
-
-  newMoovParts.push(buildStudioStateUUID(config.studioState));
-
-  const newMoov = makeBox('moov', newMoovParts);
-
-  const delta = newMoov.byteLength - moov.size;
-  if (mdat && moov.offset < mdat.offset && delta !== 0) {
-    const newMoovView = new DataView(newMoov.buffer);
-    shiftChunkOffsets(newMoovView, 8, newMoov.byteLength, delta);
+  // Update next_track_ID in mvhd
+  const mvhdSlice = newMoovParts.find(p => p.byteLength >= 8 && String.fromCharCode(p[4], p[5], p[6], p[7]) === 'mvhd');
+  const nextTrackId = maxTrackId + 1;
+  if (mvhdSlice) {
+    const mvView = new DataView(mvhdSlice.buffer, mvhdSlice.byteOffset, mvhdSlice.byteLength);
+    const mvVer = mvView.getUint8(8);
+    const nextIdPos = 8 + (mvVer === 1 ? 108 : 96);
+    if (mvhdSlice.byteLength >= nextIdPos + 4) {
+      mvView.setUint32(nextIdPos, nextTrackId + 1, false);
+    }
   }
 
-  const out = new Uint8Array(workingBuf.byteLength + delta);
+  const udtaBox = buildUdtaAtom(config.chapters, config.metaInfo, config.coverBytes, config.coverMime);
+  const stateUuidBox = buildStudioStateUUID(config.studioState);
+
+  // If captions exist, build the tx3g subtitle track and appended mdat
+  let subtitleMdatBox = null;
+  if (config.captions && config.captions.length > 0) {
+    // First pass with dummy offset 0 to measure exact byte size of newMoov
+    const dummySub = buildTx3gSubtitleTrack(
+      config.captions, config.rawVideoDuration, config.segments,
+      mvhdTimescale, totalMvhdTicks, nextTrackId, 0,
+      config.capLang, config.capDefault, detectedVideoW, detectedVideoH
+    );
+
+    const tempParts = [...newMoovParts, dummySub.trakBox];
+    if (udtaBox) tempParts.push(udtaBox);
+    tempParts.push(stateUuidBox);
+    const tempMoov = makeBox('moov', tempParts);
+
+    const delta = tempMoov.byteLength - moov.size;
+    const finalSubtitleMdatOffset = workingBuf.byteLength + delta;
+
+    // Second pass with exact file byte offset for the appended subtitle mdat
+    const finalSub = buildTx3gSubtitleTrack(
+      config.captions, config.rawVideoDuration, config.segments,
+      mvhdTimescale, totalMvhdTicks, nextTrackId, finalSubtitleMdatOffset,
+      config.capLang, config.capDefault, detectedVideoW, detectedVideoH
+    );
+    newMoovParts.push(finalSub.trakBox);
+    subtitleMdatBox = finalSub.mdatBox;
+  }
+
+  if (udtaBox) newMoovParts.push(udtaBox);
+  newMoovParts.push(stateUuidBox);
+
+  const newMoov = makeBox('moov', newMoovParts);
+  const delta = newMoov.byteLength - moov.size;
+
+  // Shift existing video/audio stco & co64 offsets if moov precedes mdat
+  // (Exclude our newly built subtitle track whose stco already points to the final EOF offset)
+  if (mdat && moov.offset < mdat.offset && delta !== 0) {
+    const newMoovView = new DataView(newMoov.buffer);
+    for (const child of parseAtoms(newMoovView, 8, newMoov.byteLength)) {
+      if (child.type === 'trak' && !isStudioSubtitleTrack(newMoovView, child)) {
+        shiftChunkOffsets(newMoovView, child.dataStart, child.end, delta);
+      }
+    }
+  }
+
+  const extraMdatLen = subtitleMdatBox ? subtitleMdatBox.byteLength : 0;
+  const out = new Uint8Array(workingBuf.byteLength + delta + extraMdatLen);
   out.set(new Uint8Array(workingBuf, 0, moov.offset), 0);
   out.set(newMoov, moov.offset);
   out.set(new Uint8Array(workingBuf, moov.end), moov.offset + newMoov.byteLength);
+  if (subtitleMdatBox) {
+    out.set(subtitleMdatBox, workingBuf.byteLength + delta);
+  }
   return out;
 }
 
@@ -952,9 +1696,17 @@ document.getElementById('exportBtn').addEventListener('click', async () => {
     coverMime = coverInput.files[0].type;
   }
 
+  const capLang = (document.getElementById('capLang').value.trim() || 'eng').toLowerCase().slice(0, 3);
+  const capDefault = document.getElementById('capDefault').checked;
+  const transcript = document.getElementById('transcriptText').value.trim();
+
   const studioState = {
     timelineRules,
     chapters,
+    captions,
+    capLang,
+    capDefault,
+    transcript,
     audioSyncMs: parseFloat(document.getElementById('audioSyncMs').value) || 0,
     spatialEnabled: document.getElementById('spatialEnabled').value === 'true',
     stereoMode: document.getElementById('stereoMode').value,
@@ -972,6 +1724,7 @@ document.getElementById('exportBtn').addEventListener('click', async () => {
   try {
     const outBytes = rebuildMp4Container(loadedFileBuffer, {
       ...studioState,
+      rawVideoDuration: videoDuration,
       segments,
       coverBytes,
       coverMime,
@@ -979,7 +1732,8 @@ document.getElementById('exportBtn').addEventListener('click', async () => {
         title: studioState.metaTitle,
         artist: studioState.metaArtist,
         comment: studioState.metaComment,
-        gps: studioState.metaGps
+        gps: studioState.metaGps,
+        transcript: studioState.transcript
       },
       studioState
     });
@@ -996,8 +1750,10 @@ document.getElementById('exportBtn').addEventListener('click', async () => {
     showStatus(
       `Exported "${a.download}" instantaneously without re-encoding!\n` +
       `• Edit List (elst): ${segments.length} playable segment(s), Audio Sync Offset: ${studioState.audioSyncMs}ms\n` +
-      `• 360° Spatial (uuid): ${studioState.spatialEnabled ? `Enabled (${studioState.stereoMode}, Initial Yaw ${studioState.initYaw}°, Pitch ${studioState.initPitch}°, Roll ${studioState.initRoll}°)` : 'Disabled'}\n` +
+      `• 360° Spatial (uuid): ${studioState.spatialEnabled ? `Enabled (${studioState.stereoMode}, Initial Yaw${studioState.initYaw}°, Pitch ${studioState.initPitch}°, Roll${studioState.initRoll}°)` : 'Disabled'}\n` +
       `• Geometry (tkhd): Rotation ${studioState.rotationDeg}°, Mirror: ${studioState.mirrorMode}\n` +
+      `• Captions (tx3g): ${captions.length} cue(s) (${capLang}, Default: ${capDefault ? 'Yes' : 'No'})\n` +
+      `• Transcript (©lyr): ${transcript ? `${transcript.length} chars saved` : 'None'}\n` +
       `• User Data (udta): ${chapters.length} chapter(s), Cover Art: ${coverBytes ? 'Embedded' : 'None'}, State UUID: Saved`
     );
   } catch (err) {
