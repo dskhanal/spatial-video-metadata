@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>MP4/MOV Spatial Metadata Studio</title>
-  <link rel="stylesheet" href="style.css">
+  <title>Spatial &amp; Multi-Surface Simulation Studio</title>
+  <link rel="stylesheet" href="style.css?v=20261018-footer-license-1">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 </head>
 <body>
@@ -14,106 +14,254 @@
     <button type="button" onclick="hideToast()">X</button>
   </div>
 
-  <main>
-    <header>
-      <h1>MP4/MOV Spatial Metadata Studio</h1>
-      <p>Non-destructive 360&deg; view, smooth slow-mo frame interpolation, gapless crossfade loop, audio hide/removal, edit list, rotation, chapters, captions (tx3g) and metadata inspector.</p>
-    </header>
+  <main><header>
+      <h1>Spatial &amp; Multi-Surface Simulation Studio</h1>
+      <p>360&deg; video, CAVE simulation, 3D billboard projection, edit list, rotation, chapters, captions, metadata and export.</p>
+    </header><div class="studio-layout" id="studioLayout" data-mode="360">
+<aside class="settings-sidebar" id="controlSidebar" aria-label="Video controls">
+<div class="sidebar-heading"><h2>Controls</h2><span class="dim">Expand a group to adjust</span></div>
+<details class="control-group " id="cameraControlGroup" open>
+<summary>Camera &amp; view</summary>
+<div class="control-group-body">
+<div id="viewActions">
+              <button id="captureViewBtn" type="button">Set Current View as Initial</button>
+              <button id="resetViewBtn" type="button">Reset to Initial</button>
+              <label class="inline">Roll
+                <input id="liveRollSlider" type="range" min="-180" max="180" step="1" value="0">
+              </label>
+              <label id="caveBorderToggleWrap" class="inline hidden" title="Show or hide the 10-screen CAVE border lines">
+                <input type="checkbox" id="caveShowBorders" checked>
+                Screen Borders
+              </label>
+            </div>
+</div>
+</details><details class="control-group hidden" id="caveSettings" open>
+<summary>CAVE · Corner angles</summary>
+<div class="control-group-body">
 
-    <section>
-      <div class="row">
-        <div class="grow">
-          <label for="fileInput">1. Load .mp4 or .mov (or try the pre-configured sample)</label>
-          <div class="file-bar">
-            <input type="file" id="fileInput" accept=".mp4,.mov,video/mp4,video/quicktime">
-            <button id="loadSampleBtn" type="button" class="primary" title="Load sample/mountain-top-night-sky.mp4 with pre-configured 360° pose, speed ramp, chapters, captions & tags">Load Sample Video</button>
+        <div class="cave-corners-grid">
+          <div class="cave-corner-control">
+            <label for="caveLeftAngle">Top-left angle (&deg;)</label>
+            <div class="cave-angle-pair">
+              <input id="caveLeftAngleSlider" type="range" min="-45" max="45" step="0.1" value="45" aria-label="Top-left angle slider">
+              <input id="caveLeftAngle" type="number" min="-45" max="45" step="0.1" value="45">
+            </div>
+          </div>
+          <div class="cave-corner-control">
+            <label for="caveRightAngle">Top-right angle (&deg;)</label>
+            <div class="cave-angle-pair">
+              <input id="caveRightAngleSlider" type="range" min="-45" max="45" step="0.1" value="45" aria-label="Top-right angle slider">
+              <input id="caveRightAngle" type="number" min="-45" max="45" step="0.1" value="45">
+            </div>
+          </div>
+          <div class="cave-corner-control">
+            <label for="caveBottomLeftAngle">Bottom-left angle (&deg;)</label>
+            <div class="cave-angle-pair">
+              <input id="caveBottomLeftAngleSlider" type="range" min="-45" max="45" step="0.1" value="0" aria-label="Bottom-left angle slider">
+              <input id="caveBottomLeftAngle" type="number" min="-45" max="45" step="0.1" value="0">
+            </div>
+          </div>
+          <div class="cave-corner-control">
+            <label for="caveBottomRightAngle">Bottom-right angle (&deg;)</label>
+            <div class="cave-angle-pair">
+              <input id="caveBottomRightAngleSlider" type="range" min="-45" max="45" step="0.1" value="0" aria-label="Bottom-right angle slider">
+              <input id="caveBottomRightAngle" type="number" min="-45" max="45" step="0.1" value="0">
+            </div>
           </div>
         </div>
-        <div>
-          <label>2. View mode</label>
-          <div class="seg">
-            <button id="mode360Btn" type="button" class="active">360&deg; View</button>
-            <button id="modeFlatBtn" type="button">Flat View</button>
-          </div>
+        <div class="inline cave-settings-actions">
+          <label>View FOV (&deg;)<input id="caveFov" type="number" min="30" max="110" step="0.1" value="75"></label>
+          <button id="caveAnglePresetBtn" type="button">Corner correction (45°)</button>
+          <button id="caveFlatCeilingBtn" type="button">All panels flat (0&deg;)</button>
         </div>
-        <div>
-          <label for="playheadDisplay">Playhead</label>
+        <p class="dim">Each corner accepts −45° to +45°. Positive angles open the panel outwards (ceiling up, floor down); negative angles fold it inwards. Borders and wall joins follow the geometry. Centre panels stay fixed.</p>
+      
+</div>
+</details><div id="windowSettings" class="hidden"><details class="control-group " id="billboardStageControls" open>
+<summary>3D Billboard · Stage</summary>
+<div class="control-group-body">
+
+        <div class="between">
+          <div>
+            
+            <p class="dim">A video stage that extends beyond the display. Match your monitor and viewing position, then present full screen. Esc returns to the controls; Space pauses or plays.</p>
+          </div>
           <div class="inline">
-            <input type="text" id="playheadDisplay" readonly value="0.00s / 0.00s" size="16">
-            <button id="grabTimeBtn" type="button" title="Copy playhead time into cut, chapter, and caption inputs">Grab</button>
+            <button id="windowResetBtn" type="button">Reset billboard</button>
+            <button id="presentWindowBtn" type="button" class="primary">Present billboard</button>
           </div>
         </div>
-      </div>
-    </section>
-
-    <section>
-      <div id="viewport">
-        <div id="webglContainer">
-          <div id="reticle"></div>
-
-          <div id="hud">
-            <div><strong>Camera</strong></div>
-            <div>Yaw: <span id="hudYaw">0.0&deg;</span></div>
-            <div>Pitch: <span id="hudPitch">0.0&deg;</span></div>
-            <div>Roll: <span id="hudRoll">0.0&deg;</span></div>
-            <div>FOV: <span id="hudFov">75&deg;</span></div>
-            <div class="dim">Drag to look. Scroll to zoom.</div>
-          </div>
-
-          <div id="poseBox">
-            <div class="dim">Saved initial pose</div>
-            <div id="savedPoseBadge">Yaw: 0&deg; | Pitch: 0&deg; | Roll: 0&deg;</div>
-          </div>
-
-          <div id="viewActions">
-            <button id="captureViewBtn" type="button">Set Current View as Initial</button>
-            <button id="resetViewBtn" type="button">Reset to Initial</button>
-            <label class="inline">Roll
-              <input id="liveRollSlider" type="range" min="-180" max="180" step="1" value="0">
-            </label>
+        <div class="inline billboard-tools-toolbar">
+          <button id="billboardFitBtn" type="button">Fit stage</button>
+          <button id="billboardCompareBtn" type="button" aria-pressed="false">Compare flat</button>
+          <button id="billboardCalibrateBtn" type="button">Calibrate viewpoint</button>
+        </div>
+        <p id="billboardFitStatus" class="dim" role="status">The rim stays fixed while depth and angles change. Fit stage explicitly changes its size.</p>
+        <div id="billboardCalibrationPanel" class="hidden">
+          <strong id="billboardCalibrationTitle"></strong>
+          <p id="billboardCalibrationText"></p>
+          <div class="inline">
+            <button id="billboardGuideBack" type="button">Back</button>
+            <button id="billboardGuideNext" type="button">Next</button>
+            <button id="billboardGuideCancel" type="button">Close guide</button>
           </div>
         </div>
+        
+</div>
+</details><div class="window-controls-grid">
+<details class="control-group " id="billboardFieldGroup0" open>
+<summary>Display &amp; depth</summary>
+<div class="control-group-body">
 
-        <!-- 2D Flat View Canvas (renders both smooth slow-mo frame interpolation and gapless loop crossfades) -->
-        <canvas id="flatCanvas" width="1280" height="720" class="hidden"></canvas>
+            
+            <div class="window-fields">
+              <label>Display width (cm)<input id="window-width" type="number" min="10" max="600" step="1" value="64"></label>
+              <label>Display height (cm)<input id="window-height" type="number" min="10" max="400" step="1" value="36"></label>
+              <label>Scene depth (cm)<input id="window-depth" type="number" min="0" max="80" step="0.1" value="28"></label>
+              <label>Rim finish<select id="window-finish"><option value="stone">Light stone</option><option value="dark">Graphite</option></select></label>
+            </div>
+            <div class="billboard-depth-control">
+              <label for="window-popout">Pop-out depth (cm)</label>
+              <div class="billboard-range-pair">
+                <input id="billboard-popout-slider" type="range" min="0" max="60" step="0.5" value="24" aria-label="Pop-out depth slider">
+                <input id="window-popout" type="number" min="0" max="60" step="0.5" value="24">
+              </div>
+            </div>
+            <p id="billboardDepthStatus" class="dim" aria-live="polite"></p>
+            <p class="dim">Positive depth brings the video floor in front of the rim. Pop-out stays within 60% of the viewing distance.</p>
+            <label class="inline"><input id="window-mullions" type="checkbox">Display crossbars</label>
+          
+</div>
+</details><details class="control-group " id="billboardFieldGroup1">
+<summary>Viewpoint</summary>
+<div class="control-group-body">
 
-        <!-- Dual hidden hardware decoders for gapless crossfade looping & sub-frame blending -->
-        <video id="videoPreview" playsinline crossorigin="anonymous"></video>
-        <video id="loopBufferVideo" playsinline crossorigin="anonymous" muted></video>
+            
+            <div class="window-fields">
+              <label>Viewing distance (cm)<input id="window-distance" type="number" min="20" max="800" step="1" value="85"></label>
+              <label>Left / right (cm)<input id="window-eyeX" type="number" min="-150" max="150" step="5" value="0"></label>
+              <label>Eye level (cm)<input id="window-eyeY" type="number" min="-100" max="100" step="1" value="8"></label>
+            </div>
+            <p class="dim">Measure the display width and height, then set your eye position relative to its centre. The perspective is calibrated for that viewing position.</p>
+            <label class="inline"><input id="window-preview" type="checkbox">Preview head movement</label>
+          
+</div>
+</details><details class="control-group " id="billboardFieldGroup2">
+<summary>Scene</summary>
+<div class="control-group-body">
 
-        <!-- Live Caption Preview Overlay (Shown in both 360 and Flat modes) -->
-        <div id="captionOverlay" class="hidden"></div>
+            
+            <div class="window-fields">
+              <label>Field of view (&deg;)<input id="window-fov" type="number" min="40" max="110" step="1" value="105"></label>
+              <label>Look left / right (&deg;)<input id="window-yaw" type="number" min="-180" max="180" step="0.1" value="0"></label>
+              <label>Look up / down (&deg;)<input id="window-pitch" type="number" min="-45" max="45" step="1" value="8"></label>
+              <label>Scene brightness (%)<input id="window-brightness" type="number" min="40" max="140" step="5" value="100"></label>
+            </div>
+            <div class="billboard-depth-control">
+              <label for="window-floorLevel">Ground line (% from bottom)</label>
+              <div class="billboard-range-pair">
+                <input id="billboard-floorLevel-slider" type="range" min="10" max="60" step="0.5" value="32" aria-label="Ground line slider">
+                <input id="window-floorLevel" type="number" min="10" max="60" step="0.5" value="32">
+              </div>
+            </div>
+            <label class="inline"><input id="window-loop" type="checkbox" checked>Loop video</label>
+            <p class="dim">Drag to look around; scroll to zoom. The sample video is projected onto a rear wall and a foreground floor. This 2.5D profile preserves the perspective already recorded in the people and buildings.</p>
+          
+</div>
+</details></div>
+<details class="control-group " id="billboardSurfaceControls">
+<summary>Surface angles</summary>
+<div class="control-group-body">
 
-        <div id="emptyVideoOverlay">
-          <p><strong>No video loaded</strong></p>
-          <p>Select an .mp4 or .mov above, or load the built-in mountain night sky sample with pre-configured 360&deg; pose, speed ramps, chapters, and captions.</p>
-          <button id="overlaySampleBtn" type="button">Load Sample (mountain-top-night-sky.mp4)</button>
-        </div>
-      </div>
+          
+          <div class="billboard-surface-grid">
+            <div>
+              <label for="window-leftAngle">Left surface angle (&deg;)</label>
+              <div class="billboard-range-pair">
+                <input id="billboard-leftAngle-slider" type="range" min="-45" max="45" step="0.1" value="0" aria-label="Left surface angle slider">
+                <input id="window-leftAngle" type="number" min="-45" max="45" step="0.1" value="0">
+              </div>
+            </div>
+            <div>
+              <label for="window-rightAngle">Right surface angle (&deg;)</label>
+              <div class="billboard-range-pair">
+                <input id="billboard-rightAngle-slider" type="range" min="-45" max="45" step="0.1" value="0" aria-label="Right surface angle slider">
+                <input id="window-rightAngle" type="number" min="-45" max="45" step="0.1" value="0">
+              </div>
+            </div>
+            <div>
+              <label for="window-topAngle">Top surface angle (&deg;)</label>
+              <div class="billboard-range-pair">
+                <input id="billboard-topAngle-slider" type="range" min="-45" max="45" step="0.1" value="0" aria-label="Top surface angle slider">
+                <input id="window-topAngle" type="number" min="-45" max="45" step="0.1" value="0">
+              </div>
+            </div>
+          </div>
+          <p class="dim">−45° to +45°, hinged at the fixed rim. Positive opens the rear chamber; negative folds inward. Scene depth reduces when needed to keep inward surfaces from crossing.</p>
+        
+</div>
+</details><details class="control-group billboard-manual-overlap" id="billboardOverlapControls">
+<summary>Manual foreground overlap</summary>
+<div class="control-group-body">
 
-      <div class="transport">
-        <button id="playPauseBtn" type="button">Play</button>
-        <button id="loopToggleBtn" type="button" class="active" title="Gapless continuous loop without stopping at the end">Loop: Gapless</button>
-        <button id="smoothSlowMoToggleBtn" type="button" class="active" title="Blend intermediate sub-frames in WebGL so slow-motion looks fluid instead of choppy">Smooth Slo-Mo: On</button>
-        <input type="range" id="seekBar" min="0" max="100" step="0.02" value="0">
-        <button id="muteBtn" type="button">Audio</button>
-        <label class="inline" for="transportSpeedSelect" title="Global Video Speed (saved to MP4 Edit List)">
-          Speed:
-          <select id="transportSpeedSelect">
-            <option value="0.25">0.25x (Slow)</option>
-            <option value="0.5">0.5x (Slow)</option>
-            <option value="0.75">0.75x</option>
-            <option value="1" selected>1x (Normal)</option>
-            <option value="1.25">1.25x</option>
-            <option value="1.5">1.5x (Fast)</option>
-            <option value="2">2x (Fast)</option>
-            <option value="4">4x (Timelapse)</option>
-          </select>
-        </label>
-        <span id="liveSpeedBadge" title="Active playback rate & interpolation mode">1x</span>
-      </div>
+          
+          <p class="dim">Capture a background frame where the selected subject has moved away, then pause at the subject, edit its outline and enable overlap. This uses a still background plate and manual keyframes; a steady camera gives the cleanest result.</p>
+          <div class="inline">
+            <button id="billboardCapturePlateBtn" type="button">Capture clean background</button>
+            <button id="billboardClearPlateBtn" type="button">Remove background</button>
+            <button id="billboardEditOutlineBtn" type="button" aria-pressed="false">Edit foreground outline</button>
+            <label class="inline"><input id="billboardCutoutEnabled" type="checkbox" disabled>Enable foreground overlap</label>
+          </div>
+          <div class="window-fields billboard-overlap-fields">
+            <div>
+              <label for="window-cutoutDepth">Foreground depth (cm)</label>
+              <div class="billboard-range-pair">
+                <input id="billboard-cutoutDepth-slider" type="range" min="0" max="60" step="0.5" value="24" aria-label="Foreground depth slider">
+                <input id="window-cutoutDepth" type="number" min="0" max="60" step="0.5" value="24">
+              </div>
+            </div>
+            <div>
+              <label for="window-feather">Edge feather (%)</label>
+              <div class="billboard-range-pair">
+                <input id="billboard-feather-slider" type="range" min="0" max="2" step="0.05" value="0.3" aria-label="Edge feather slider">
+                <input id="window-feather" type="number" min="0" max="2" step="0.05" value="0.3">
+              </div>
+            </div>
+          </div>
+          <p class="dim">Drag the 12 outline points around the subject in the flat editing view. Arrow keys move a focused point. Keep the same scene direction while editing and playing the outline.</p>
+          <div class="inline">
+            <button id="billboardRestoreOutlineViewBtn" type="button">Return to outline view</button>
+            <button id="billboardStoreOutlineBtn" type="button">Save outline at playhead</button>
+            <button id="billboardDeleteOutlineBtn" type="button">Delete nearest keyframe</button>
+            <button id="billboardClearOutlinesBtn" type="button">Reset outline</button>
+          </div>
+          <label>Outline keyframes<select id="billboardOutlineFrames" aria-label="Outline keyframes"><option value="">No keyframes</option></select></label>
+          <p id="billboardOverlapStatus" class="dim" role="status" aria-live="polite"></p>
+        
+</div>
+</details><details class="control-group window-alignment" id="billboardAlignmentControls">
+<summary>Align projector output</summary>
+<div class="control-group-body">
 
-      <div>
+          
+          <p class="dim">For a monitor, keep the automatic alignment. For a projector, show the grid and drag the corners to the physical surface. Presentation hides the grid.</p>
+          <div class="inline">
+            <label class="inline"><input id="windowAlignToggle" type="checkbox">Show grid and corner handles</label>
+            <button id="windowResetAlignmentBtn" type="button">Reset alignment</button>
+          </div>
+          <div class="window-corner-inputs">
+            <fieldset><legend>Top left</legend><label>X (%)<input type="number" min="0" max="100" step="0.5" data-corner-coordinate="0,0" aria-label="Top left X (%)"></label><label>Y (%)<input type="number" min="0" max="100" step="0.5" data-corner-coordinate="0,1" aria-label="Top left Y (%)"></label></fieldset>
+            <fieldset><legend>Top right</legend><label>X (%)<input type="number" min="0" max="100" step="0.5" data-corner-coordinate="1,0" aria-label="Top right X (%)"></label><label>Y (%)<input type="number" min="0" max="100" step="0.5" data-corner-coordinate="1,1" aria-label="Top right Y (%)"></label></fieldset>
+            <fieldset><legend>Bottom right</legend><label>X (%)<input type="number" min="0" max="100" step="0.5" data-corner-coordinate="2,0" aria-label="Bottom right X (%)"></label><label>Y (%)<input type="number" min="0" max="100" step="0.5" data-corner-coordinate="2,1" aria-label="Bottom right Y (%)"></label></fieldset>
+            <fieldset><legend>Bottom left</legend><label>X (%)<input type="number" min="0" max="100" step="0.5" data-corner-coordinate="3,0" aria-label="Bottom left X (%)"></label><label>Y (%)<input type="number" min="0" max="100" step="0.5" data-corner-coordinate="3,1" aria-label="Bottom left Y (%)"></label></fieldset>
+          </div>
+          <p id="windowAlignmentStatus" class="dim" role="status" aria-live="polite"></p>
+        
+</div>
+</details></div><details class="control-group " id="timelineControls">
+<summary>Edit timeline</summary>
+<div class="control-group-body">
+
         <div class="timeline-head">
           <label>3. Edit list timeline</label>
           <div class="legend">
@@ -127,93 +275,14 @@
           <div id="timelinePlayhead"></div>
           <div id="timelineOverlays"></div>
         </div>
-      </div>
-    </section>
-
-    <section>
-      <div class="tabs">
-        <button type="button" class="tab-btn active" data-tab="tab-edits">1. Cuts, Speed &amp; Audio</button>
-        <button type="button" class="tab-btn" data-tab="tab-spatial">2. 360&deg; Spatial</button>
-        <button type="button" class="tab-btn" data-tab="tab-geometry">3. Rotate &amp; Mirror</button>
-        <button type="button" class="tab-btn" data-tab="tab-chapters">4. Chapters</button>
-        <button type="button" class="tab-btn" data-tab="tab-catalog">5. Tags &amp; Cover</button>
-        <button type="button" class="tab-btn" data-tab="tab-captions">6. Captions</button>
-        <button type="button" class="tab-btn" data-tab="tab-inspector">7. Metadata Inspector</button>
-      </div>
-
-      <!-- TAB 1: CUTS, SMOOTH SLOW-MO, GAPLESS LOOP & AUDIO OUTPUT -->
-      <div id="tab-edits" class="tab-panel">
-        <div class="box">
-          <div class="between">
-            <h3>Global playback speed, smooth slow-mo interpolation &amp; gapless loop</h3>
-            <button id="resetSpeedBtn" type="button" class="sm">Reset Speed &amp; Loop</button>
-          </div>
-          <div class="grid3">
-            <div>
-              <label for="globalSpeed">Default playback speed (edts / elst)</label>
-              <select id="globalSpeed">
-                <option value="0.25">0.25x - Quarter Speed Slow Motion</option>
-                <option value="0.5">0.5x - Half Speed Slow Motion</option>
-                <option value="0.75">0.75x - Slight Slow Down</option>
-                <option value="1" selected>1x - Normal Speed</option>
-                <option value="1.25">1.25x - Slight Speed Up</option>
-                <option value="1.5">1.5x - Fast Playback</option>
-                <option value="2">2x - Double Speed</option>
-                <option value="4">4x - Quadruple Timelapse</option>
-              </select>
-            </div>
-            <div>
-              <label for="loopCrossfadeSec">Gapless loop transition (crossfade window)</label>
-              <select id="loopCrossfadeSec">
-                <option value="0">0.0s (Instant Pre-Buffered Jump - No Pause)</option>
-                <option value="0.4">0.4s (Smooth Loop Dissolve)</option>
-                <option value="0.6" selected>0.6s (Seamless Loop Crossfade)</option>
-                <option value="1.0">1.0s (Long Ambient Loop Blend)</option>
-                <option value="1.5">1.5s (Ultra-Smooth Sky/Water Loop)</option>
-              </select>
-            </div>
-            <div>
-              <label for="outputRepeatCount">Output file repeat count (elst loop)</label>
-              <select id="outputRepeatCount">
-                <option value="1" selected>1x (Play Once - Standard)</option>
-                <option value="2">2x (Repeat Twice in Output File)</option>
-                <option value="3">3x (Repeat 3 Times in Output File)</option>
-                <option value="5">5x (Repeat 5 Times in Output File)</option>
-                <option value="10">10x (Repeat 10 Times in Output File)</option>
-              </select>
-            </div>
-          </div>
-
-          <div class="grid3" style="margin-bottom:4px;">
-            <div>
-              <label class="inline">
-                <input type="checkbox" id="studioLoopCheckbox" checked>
-                Play continuously without stopping in Studio (Dual-Decoder)
-              </label>
-            </div>
-            <div>
-              <label class="inline">
-                <input type="checkbox" id="smoothSlowMoCheckbox" checked>
-                Smooth Slow-Mo sub-frame blending (&lt;1x speeds)
-              </label>
-            </div>
-            <div>
-              <label class="inline">
-                <input type="checkbox" id="conformSttsCheckbox" checked>
-                Scale native MP4 <code>stts</code> sample deltas for global slow-mo
-              </label>
-            </div>
-          </div>
-          <p class="dim">
-            <strong>Smooth Slow-Mo Blending</strong> interpolates intermediate sub-frames at 60fps in WebGL/Canvas so 24/30fps slow-motion clips don't look choppy. <strong>Gapless Dual-Decoder Loop</strong> pre-buffers the start of the video in a second decoder and crossfades the tail into the start so playback never pauses or hiccups at the loop boundary.
-          </p>
-        </div>
+      
+</div>
+</details><details class="control-group " id="tab-edits">
+<summary>Cuts &amp; audio sync</summary>
+<div class="control-group-body">
 
         <div class="box">
-          <div class="between">
-            <h3>Segment cuts, speed changes &amp; freeze frames (edts / elst)</h3>
-            <button id="clearRulesBtn" type="button" class="sm">Clear All Rules</button>
-          </div>
+          <h3>Segment cuts, speed changes &amp; freeze frames</h3><button id="clearRulesBtn" type="button" class="section-reset">Clear rules</button><p class="dim editor-note">Preview speed does not change export. Segment speeds and freeze holds apply on export; support varies by player.</p>
           <div class="grid4">
             <div>
               <label for="ruleStart">Start (sec)</label>
@@ -224,18 +293,8 @@
               <input type="number" id="ruleEnd" step="0.1" min="0" value="2">
             </div>
             <div>
-              <label for="ruleAction">Action / Segment Speed</label>
-              <select id="ruleAction">
-                <option value="cut">Cut / Skip</option>
-                <option value="0.25">Smooth Slow 0.25x</option>
-                <option value="0.5">Smooth Slow 0.5x</option>
-                <option value="0.75">Smooth Slow 0.75x</option>
-                <option value="1.25">Fast 1.25x</option>
-                <option value="1.5">Fast 1.5x</option>
-                <option value="2">Fast 2x</option>
-                <option value="4">Fast 4x</option>
-                <option value="0">Freeze Frame (0x)</option>
-              </select>
+              <label for="ruleAction">Action</label>
+              <select id="ruleAction"><option value="cut">Cut / Skip</option><option value="0.25">Slow 0.25x</option><option value="0.5">Slow 0.5x</option><option value="0.75">Slow 0.75x</option><option value="1.25">Fast 1.25x</option><option value="1.5">Fast 1.5x</option><option value="2">Fast 2x</option><option value="4">Fast 4x</option><option value="0">Freeze frame (export)</option></select>
             </div>
             <div class="end">
               <button id="addRuleBtn" type="button" class="primary">+ Add / Save Rule</button>
@@ -245,39 +304,21 @@
         </div>
 
         <div class="box">
-          <div class="between">
-            <h3>Output audio track control &amp; sync offset</h3>
-            <button id="clearAudioSyncBtn" type="button" class="sm">Reset Audio Settings</button>
-          </div>
-          <div class="grid2">
-            <div>
-              <label for="audioOutputMode">Audio in exported video</label>
-              <select id="audioOutputMode">
-                <option value="keep" selected>Keep Audio (Normal)</option>
-                <option value="hide">Hide / Mute Audio Non-Destructively (tkhd disabled &amp; vol=0, reversible)</option>
-                <option value="remove">Remove Audio Track from Output (strip soun trak header)</option>
-              </select>
-            </div>
-            <div>
-              <label for="audioSyncMs">Audio delay / advance (milliseconds)</label>
-              <input type="number" id="audioSyncMs" step="50" value="0" placeholder="e.g. 250 or -250">
-            </div>
-          </div>
-          <p class="dim">
-            <strong>Hide / Mute Non-Destructively</strong> disables the audio track header (<code>tkhd</code> flags = 0, volume = 0) so players play the video silently, while keeping the audio stream intact if you reload the file later. <strong>Remove Audio Track</strong> strips the audio <code>trak</code> box from <code>moov</code> completely.
-          </p>
+          <h3>Audio output &amp; sync</h3><button id="clearAudioSyncBtn" type="button" class="section-reset">Reset audio</button><label for="audioOutputMode">Audio in exported video</label><select id="audioOutputMode"><option value="keep">Keep audio</option><option value="hide">Hide audio (keep track disabled)</option><option value="remove">Omit audio track</option></select>
+          <label for="audioSyncMs">Delay / advance (milliseconds)</label>
+          <input type="number" id="audioSyncMs" step="50" value="0" placeholder="e.g. 250 or -250">
+          <p class="dim">Positive values add an empty edit before the audio track. Negative values shift audio start forward.</p>
         </div>
-      </div>
+      
+</div>
+</details><details class="control-group " id="tab-spatial">
+<summary>360° metadata &amp; initial pose</summary>
+<div class="control-group-body">
 
-      <!-- TAB 2: 360 SPATIAL -->
-      <div id="tab-spatial" class="tab-panel hidden">
         <div class="box">
           <div class="between">
-            <h3>Spherical Video V1 (uuid) and initial camera pose</h3>
-            <div class="inline">
-              <button id="captureViewTabBtn" type="button" class="sm">Copy Current Viewport Angle</button>
-              <button id="clearSpatialBtn" type="button" class="sm">Clear / Disable 360&deg;</button>
-            </div>
+            <h3>Spherical Video V1 (uuid) and initial camera pose</h3><button type="button" class="section-reset" id="clearSpatialBtn">Clear 360° metadata</button>
+            <button id="captureViewTabBtn" type="button">Copy Current Viewport Angle</button>
           </div>
           <div class="grid2">
             <div>
@@ -311,15 +352,14 @@
             </div>
           </div>
         </div>
-      </div>
+      
+</div>
+</details><details class="control-group " id="tab-geometry">
+<summary>Rotate &amp; mirror</summary>
+<div class="control-group-body">
 
-      <!-- TAB 3: GEOMETRY -->
-      <div id="tab-geometry" class="tab-panel hidden">
         <div class="box">
-          <div class="between">
-            <h3>Rotation and mirror (tkhd matrix)</h3>
-            <button id="clearGeometryBtn" type="button" class="sm">Reset Geometry</button>
-          </div>
+          <h3>Rotation and mirror (tkhd matrix)</h3><button type="button" class="section-reset" id="clearGeometryBtn">Reset rotation & mirror</button>
           <p class="dim">Updates the 3x3 matrix in the video track header. Lossless.</p>
           <div class="grid2">
             <div>
@@ -341,15 +381,74 @@
             </div>
           </div>
         </div>
-      </div>
+      
+</div>
+</details>
+</aside>
+<section class="preview-panel" aria-labelledby="previewTitle">
+<div id="previewToolbar" aria-label="Video source, view mode and playback"><div id="sourceControls" class="preview-toolbar-group" role="group" aria-labelledby="sourceControlsTitle"><h3 id="sourceControlsTitle">Video source</h3><div class="preview-toolbar-body"><input type="file" id="fileInput" aria-label="Load .mp4 or .mov" accept=".mp4,.mov,video/mp4,video/quicktime"><button id="sampleVideoBtn" type="button">Load sample video</button><span id="loadedVideoName" class="dim" role="status" aria-live="polite"></span></div></div><div id="modeControls" class="preview-toolbar-group" role="group" aria-labelledby="modeControlsTitle"><h3 id="modeControlsTitle">View mode</h3><div class="preview-toolbar-body"><div class="seg">
+            <button id="mode360Btn" type="button" class="active">360&deg; View</button>
+            <button id="modeCaveBtn" type="button">CAVE / Multi-Surface</button>
+            <button id="modeFlatBtn" type="button">Flat View</button>
+            <button id="modeWindowBtn" type="button">3D Billboard</button>
+          </div></div></div><div id="playbackControls" class="preview-toolbar-group" role="group" aria-labelledby="playbackControlsTitle"><h3 id="playbackControlsTitle">Playback</h3><div class="preview-toolbar-body"><div id="transportHost"><div class="transport"><div class="toolbar-playhead"><label class="visually-hidden" for="playheadDisplay">Playhead</label><input type="text" id="playheadDisplay" readonly value="0.00s / 0.00s" size="16"><button id="grabTimeBtn" type="button" title="Copy playhead time into cut, chapter, and caption inputs">Grab</button></div>
+          <button id="playPauseBtn" type="button">Play</button>
+          <input type="range" id="seekBar" min="0" max="100" step="0.05" value="0">
+          <button id="muteBtn" type="button">Audio</button>
+          <label class="visually-hidden" for="transportSpeedSelect">Preview playback speed</label><select id="transportSpeedSelect" title="Preview speed; does not change export"><option value="0.25">0.25x</option><option value="0.5">0.5x</option><option value="0.75">0.75x</option><option value="1" selected>1x</option><option value="1.25">1.25x</option><option value="1.5">1.5x</option><option value="2">2x</option><option value="4">4x</option></select><label class="inline preview-loop-toggle"><input type="checkbox" id="studioLoopCheckbox">Loop</label><span id="liveSpeedBadge">1x</span>
+          <button id="presentWindowTransportBtn" type="button">Present billboard</button>
+          <div class="fullscreen-preview-options"><button id="fullscreenBtn" type="button" aria-controls="playerShell" aria-label="Enter full screen" aria-pressed="false" title="Enter full screen">Full screen</button><label class="inline preview-skip-cuts-toggle" title="Skip cut sections during preview"><input type="checkbox" id="previewSkipCutsCheckbox">Skip cuts</label></div>
+        </div></div></div></div></div>
 
-      <!-- TAB 4: CHAPTERS -->
-      <div id="tab-chapters" class="tab-panel hidden">
-        <div class="box">
-          <div class="between">
-            <h3>Chapter markers (udta / chpl)</h3>
-            <button id="clearChaptersBtn" type="button" class="sm">Clear All Chapters</button>
+<div class="preview-heading"><h2 id="previewTitle">360° View</h2><span class="dim">Video preview</span></div>
+<div id="playerShell"><div id="viewport">
+          <div id="webglContainer">
+            <div id="billboardGuideOverlay" class="hidden" role="status"></div>
+            <div id="billboardOutlineOverlay" class="hidden" aria-label="Manual foreground outline"></div>
+            <div id="windowCornerOverlay" class="hidden" aria-label="Output alignment corners">
+            <button type="button" data-window-corner="0" aria-label="Move top left corner" title="Drag or use arrow keys">TL</button>
+            <button type="button" data-window-corner="1" aria-label="Move top right corner" title="Drag or use arrow keys">TR</button>
+            <button type="button" data-window-corner="2" aria-label="Move bottom right corner" title="Drag or use arrow keys">BR</button>
+            <button type="button" data-window-corner="3" aria-label="Move bottom left corner" title="Drag or use arrow keys">BL</button>
           </div>
+          <div id="reticle"></div>
+
+            <div id="hud">
+              <div><strong>Camera</strong></div>
+              <div>Yaw: <span id="hudYaw">0.0&deg;</span></div>
+              <div>Pitch: <span id="hudPitch">0.0&deg;</span></div>
+              <div>Roll: <span id="hudRoll">0.0&deg;</span></div>
+              <div>FOV: <span id="hudFov">75&deg;</span></div>
+              <div class="dim">Drag to look. Scroll to zoom.</div>
+            </div>
+
+            <div id="poseBox">
+              <div class="dim">Saved initial pose</div>
+              <div id="savedPoseBadge">Yaw: 0&deg; | Pitch: 0&deg; | Roll: 0&deg;</div>
+            </div>
+
+            
+          </div>
+
+          <video id="videoPreview" playsinline crossorigin="anonymous" class="hidden"></video>
+
+          <!-- Live Caption Preview Overlay -->
+          <div id="captionOverlay" class="hidden"></div>
+
+          <div id="emptyVideoOverlay">
+            <p><strong>No video loaded</strong></p>
+            <p>Select an .mp4 or .mov in the controls, or drag to test the 360&deg; grid and 10-screen CAVE calibration room.</p>
+          </div>
+        </div></div>
+</section>
+<aside id="publishSidebar" class="settings-sidebar" aria-label="Metadata and export">
+<div class="sidebar-heading"><h2>Metadata &amp; export</h2></div>
+<details class="control-group " id="tab-chapters">
+<summary>Chapters</summary>
+<div class="control-group-body">
+
+        <div class="box">
+          <h3>Chapter markers (udta / chpl)</h3><button type="button" class="section-reset" id="clearChaptersBtn">Clear chapters</button>
           <div class="grid3">
             <div>
               <label for="chapTime">Time (sec)</label>
@@ -365,52 +464,20 @@
           </div>
           <ul id="chapList" class="list"></ul>
         </div>
-      </div>
+      
+</div>
+</details>
+<details class="control-group " id="tab-captions">
+<summary>Captions &amp; transcript</summary>
+<div class="control-group-body">
 
-      <!-- TAB 5: CATALOG TAGS & COVER -->
-      <div id="tab-catalog" class="tab-panel hidden">
-        <div class="box">
-          <div class="between">
-            <h3>Tags, GPS and cover art (udta / meta / ilst)</h3>
-            <button id="clearCatalogBtn" type="button" class="sm">Clear All Tags &amp; Cover</button>
-          </div>
-          <div class="grid2">
-            <div>
-              <label for="metaTitle">Title (&copy;nam)</label>
-              <input type="text" id="metaTitle" placeholder="e.g. 360 Campus Tour">
-            </div>
-            <div>
-              <label for="metaArtist">Artist / creator (&copy;art)</label>
-              <input type="text" id="metaArtist" placeholder="e.g. Spatial Media Lab">
-            </div>
-            <div>
-              <label for="metaComment">Comment (&copy;cmt)</label>
-              <input type="text" id="metaComment" placeholder="Notes or description">
-            </div>
-            <div>
-              <label for="metaGps">GPS (lat, lng in &copy;xyz)</label>
-              <input type="text" id="metaGps" placeholder="-37.8136, 144.9631">
-            </div>
-          </div>
-          <label for="coverInput">Cover art (JPEG or PNG in covr)</label>
-          <input type="file" id="coverInput" accept="image/jpeg,image/png">
-          <div id="coverPreviewBox" class="cover-preview-box hidden">
-            <img id="coverPreviewImg" alt="Cover preview">
-            <span id="coverPreviewLabel" class="dim">Embedded cover art loaded</span>
-            <button id="removeCoverBtn" type="button" class="sm">Remove Cover Art</button>
-          </div>
-        </div>
-      </div>
-
-      <!-- TAB 6: CAPTIONS & TRANSCRIPT -->
-      <div id="tab-captions" class="tab-panel hidden">
         <div class="box">
           <div class="between">
             <h3>Auto-Generate Captions (Native Browser Web Speech API)</h3>
             <span id="speechSupportBadge" class="dim">Checking browser speech support...</span>
           </div>
           <p class="dim" style="margin-bottom:10px;">
-            Uses your browser's built-in SpeechRecognition engine with zero external model downloads. Ensure your speakers or loopback audio are audible to your microphone input while the video plays, or speak directly to dictate live captions synced to the video playhead.
+            Uses your browser's built-in SpeechRecognition engine. Ensure speakers are audible to your microphone while the video plays, or speak directly to dictate captions synced to the playhead.
           </p>
           <div class="grid3">
             <div>
@@ -500,54 +567,66 @@
             <div class="inline">
               <button id="buildTranscriptBtn" type="button">Build from Captions</button>
               <button id="downloadTranscriptTxtBtn" type="button">Download Transcript (.TXT)</button>
-              <button id="clearTranscriptBtn" type="button">Clear Transcript</button>
             </div>
           </div>
-          <textarea id="transcriptText" placeholder="Full video transcript... Click 'Build from Captions' to populate from your caption cues, or edit freely before exporting."></textarea>
-          <p class="dim">
-            Saved inside the MP4 lyrics tag (<code>&copy;lyr</code>) and Studio state UUID. Reloading an exported MP4/MOV restores both captions and transcript.
-          </p>
+          <textarea id="transcriptText" placeholder="Full video transcript... Click 'Build from Captions' to populate from your caption cues, or edit freely before exporting."></textarea><button id="clearTranscriptBtn" type="button" class="section-reset">Clear transcript</button>
         </div>
-      </div>
+      
+</div>
+</details>
+<details class="control-group " id="tab-catalog">
+<summary>Tags &amp; cover</summary>
+<div class="control-group-body">
 
-      <!-- TAB 7: CURRENT METADATA INSPECTOR & EDITOR -->
-      <div id="tab-inspector" class="tab-panel hidden">
         <div class="box">
-          <div class="between">
-            <h3>Current Metadata Inspector (View, Edit, Clear &amp; Save)</h3>
-            <div class="inline">
-              <button id="refreshInspectorBtn" type="button" class="sm">Refresh View</button>
-              <button id="clearAllMetadataBtn" type="button" class="sm">Clear All Metadata to Defaults</button>
-              <button id="saveFromInspectorBtn" type="button" class="primary sm">Save &amp; Download Video</button>
+          <h3>Tags, GPS and cover art (udta / meta / ilst)</h3><button type="button" class="section-reset" id="clearCatalogBtn">Clear tags & cover</button>
+          <div class="grid2">
+            <div>
+              <label for="metaTitle">Title</label>
+              <input type="text" id="metaTitle" placeholder="e.g. 360 Campus Tour">
+            </div>
+            <div>
+              <label for="metaArtist">Artist / creator</label>
+              <input type="text" id="metaArtist" placeholder="e.g. Spatial Media Lab">
+            </div>
+            <div>
+              <label for="metaComment">Comment</label>
+              <input type="text" id="metaComment" placeholder="Notes or description">
+            </div>
+            <div>
+              <label for="metaGps">GPS (lat, lng)</label>
+              <input type="text" id="metaGps" placeholder="-37.8136, 144.9631">
             </div>
           </div>
-          <p class="dim">
-            Displays all native MP4/MOV metadata detected in the loaded file alongside your current edits. Click <strong>Edit</strong> on any row to modify it, <strong>Clear</strong> to strip that metadata section, or <strong>Save &amp; Download Video</strong> to write changes to the file.
-          </p>
-          <table class="meta-table">
-            <thead>
-              <tr>
-                <th style="width:22%;">Metadata Category</th>
-                <th style="width:16%;">MP4 Atom Path</th>
-                <th>Current Value / Active State</th>
-                <th style="width:160px;">Actions</th>
-              </tr>
-            </thead>
-            <tbody id="metadataTableBody"></tbody>
-          </table>
+          <label for="coverInput">Cover art (JPEG or PNG)</label>
+          <input type="file" id="coverInput" accept="image/jpeg,image/png"><div id="coverPreviewBox" class="cover-preview-box hidden"><img id="coverPreviewImg" alt="Embedded cover art preview"><span id="coverPreviewLabel" class="dim"></span><button id="removeCoverBtn" type="button">Remove cover art</button></div>
         </div>
-      </div>
+      
+</div>
+</details>
+<details class="control-group " id="exportControls">
+<summary>Export video</summary>
+<div class="control-group-body">
 
-      <div class="export">
-        <div class="inline" style="margin-bottom: 10px;">
-          <button id="exportBtn" type="button" class="primary big" style="flex: 3;">Save / Inject Metadata &amp; Download Video</button>
-          <button id="stripAllExportBtn" type="button" class="big" style="flex: 1;">Clear All Metadata</button>
-        </div>
+        <details id="metadataInspector" class="metadata-inspector"><summary>Review current metadata</summary><p id="metadataFileInfo" class="dim"></p><button type="button" id="refreshInspectorBtn" class="section-reset">Refresh review</button><div id="metadataReview"></div></details><button id="exportBtn" type="button" class="primary big">Inject Metadata and Download</button>
         <div id="statusBox" class="hidden"></div>
-      </div>
-    </section>
-  </main>
+      
+</div>
+</details>
+</aside>
+</div>
+<footer class="site-footer" aria-label="Licenses">
+  <p><a href="license.html#code" target="_blank" rel="noopener">Copyright &amp; Licensing</a> &middot; <a href="license.html#code" target="_blank" rel="noopener">MIT License</a> &middot; <a href="license.html#documentation" target="_blank" rel="noopener">CC BY 4.0</a></p>
+</footer>
+</main>
 
-  <script src="app.js"></script>
+  <script src="app.js?v=20261018-360-merge-1"></script>
+  <script src="projection-math.js?v=20261018-360-merge-1"></script>
+  <script src="billboard-math.js?v=20261018-360-merge-1"></script>
+  <script src="window-mode.js?v=20261018-360-merge-1"></script>
+  <script src="billboard-tools.js?v=20261018-360-merge-1"></script>
+  <script src="cave-calibration.js?v=20261018-cave-preset-45"></script>
+  <script src="studio-enhancements.js?v=20261018-skip-cuts-1"></script>
+  <script src="studio-layout.js?v=20261018-360-merge-1"></script>
 </body>
 </html>
