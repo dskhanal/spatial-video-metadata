@@ -758,7 +758,7 @@ sampleVideoBtn.addEventListener('click', async () => {
   try {
     const response = await fetch('image_to_video_01.mov');
     if (!response.ok) throw new Error(`Unable to load sample video (${response.status}).`);
-    const file = new File([await response.blob()], 'image_to_video_01.mov', { type: 'video/mov' });
+    const file = new File([await response.blob()], 'image_to_video_01.mov', { type: 'video/quicktime' });
     if (await loadVideoFile(file, { sourceRect: [0, 60 / 1080, 1, 960 / 1080] })) {
       fileInput.value = '';
       if (currentViewMode === 'window') {
